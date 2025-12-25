@@ -36,19 +36,30 @@ class RecordingManager {
 
   /**
    * Resume recordings for cameras that were actively recording
+   * or have continuous recording enabled
    */
   async resumeActiveRecordings() {
     try {
+      // Find cameras that:
+      // 1. Were actively recording when server stopped, OR
+      // 2. Have continuous recording mode enabled
       const cameras = await Camera.find({
         active: true,
-        'status.recordingState': 'recording',
+        $or: [
+          { 'status.recordingState': 'recording' },
+          { 'recordingSettings.mode': 'continuous' },
+        ],
       });
 
-      logger.info(`Resuming ${cameras.length} active recordings`);
+      logger.info(`Resuming/starting ${cameras.length} recordings`);
 
       for (const camera of cameras) {
         try {
-          await this.startRecording(camera);
+          // Only start if not already recording
+          if (!this.recordings.has(camera._id)) {
+            await this.startRecording(camera);
+            logger.info(`Auto-started recording for camera ${camera._id} (mode: ${camera.recordingSettings?.mode || 'default'})`);
+          }
         } catch (error) {
           logger.error(`Failed to resume recording for camera ${camera._id}:`, error);
         }
