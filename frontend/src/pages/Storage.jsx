@@ -1,14 +1,348 @@
-import { Typography, Container } from '@mui/material';
+import { useState, useEffect } from 'react';
+import {
+  Container,
+  Typography,
+  Grid,
+  Card,
+  CardContent,
+  Box,
+  LinearProgress,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Paper,
+  Button,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  TextField,
+  Alert,
+  Chip,
+  IconButton,
+  CircularProgress,
+} from '@mui/material';
+import {
+  Storage as StorageIcon,
+  Folder as FolderIcon,
+  Refresh as RefreshIcon,
+  Edit as EditIcon,
+  Warning as WarningIcon,
+  Info as InfoIcon,
+  Videocam as VideocamIcon,
+} from '@mui/icons-material';
+import { useToast } from '../context/ToastContext';
+import { useAuth } from '../context/AuthContext';
+import * as storageService from '../services/storage';
 
 function Storage() {
+  const [stats, setStats] = useState(null);
+  const [pathInfo, setPathInfo] = useState(null);
+  const [cleanupPreview, setCleanupPreview] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [changePathDialog, setChangePathDialog] = useState(false);
+  const [newPath, setNewPath] = useState('');
+  const [updating, setUpdating] = useState(false);
+
+  const { success, error: showError } = useToast();
+  const { user } = useAuth();
+
+  const isAdmin = user?.role === 'admin';
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  const loadData = async () => {
+    try {
+      setLoading(true);
+      const [statsData, pathData] = await Promise.all([
+        storageService.getStorageStats(),
+        storageService.getStoragePath(),
+      ]);
+
+      setStats(statsData);
+      setPathInfo(pathData);
+      setNewPath(pathData.currentPath);
+
+      // Load cleanup preview if admin/operator
+      if (user?.role === 'admin' || user?.role === 'operator') {
+        const preview = await storageService.previewCleanup();
+        setCleanupPreview(preview);
+      }
+    } catch (err) {
+      showError('Failed to load storage statistics');
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleUpdatePath = async () => {
+    if (!newPath || newPath === pathInfo.currentPath) {
+      return;
+    }
+
+    try {
+      setUpdating(true);
+      const result = await storageService.updateStoragePath(newPath);
+      success(result.message);
+      setChangePathDialog(false);
+      await loadData();
+    } catch (err) {
+      showError(err.response?.data?.error?.message || 'Failed to update storage path');
+      console.error(err);
+    } finally {
+      setUpdating(false);
+    }
+  };
+
+  const formatDate = (dateString) => {
+    if (!dateString) return 'N/A';
+    const date = new Date(dateString);
+    return date.toLocaleString();
+  };
+
+  const formatBytes = (bytes) => {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  };
+
+  if (loading) {
+    return (
+      <Container sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '50vh' }}>
+        <CircularProgress />
+      </Container>
+    );
+  }
+
+  if (!stats) {
+    return (
+      <Container>
+        <Alert severity="error">Failed to load storage statistics</Alert>
+      </Container>
+    );
+  }
+
   return (
-    <Container>
-      <Typography variant="h4" gutterBottom>
-        Storage Management
-      </Typography>
-      <Typography variant="body1" color="text.secondary">
-        Storage management page - To be implemented
-      </Typography>
+    <Container maxWidth="xl">
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+        <Typography variant="h4">Storage Management</Typography>
+        <IconButton onClick={loadData}>
+          <RefreshIcon />
+        </IconButton>
+      </Box>
+
+      <Grid container spacing={3}>
+        {/* Storage Path */}
+        <Grid item xs={12}>
+          <Card>
+            <CardContent>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <FolderIcon color="primary" />
+                  <Typography variant="h6">Storage Location</Typography>
+                </Box>
+                {isAdmin && (
+                  <Button
+                    variant="outlined"
+                    startIcon={<EditIcon />}
+                    onClick={() => setChangePathDialog(true)}
+                  >
+                    Change Path
+                  </Button>
+                )}
+              </Box>
+              <Typography variant="body1" sx={{ fontFamily: 'monospace', bgcolor: 'grey.100', p: 1, borderRadius: 1 }}>
+                {pathInfo.currentPath}
+              </Typography>
+              {pathInfo.configuredPath && pathInfo.configuredPath !== pathInfo.currentPath && (
+                <Alert severity="warning" sx={{ mt: 2 }}>
+                  <strong>Pending Change:</strong> New path "{pathInfo.configuredPath}" will be used after restart.
+                </Alert>
+              )}
+            </CardContent>
+          </Card>
+        </Grid>
+
+        {/* Disk Usage */}
+        <Grid item xs={12} md={6}>
+          <Card>
+            <CardContent>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+                <StorageIcon color="primary" />
+                <Typography variant="h6">Disk Usage</Typography>
+              </Box>
+              <Box sx={{ mb: 2 }}>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                  <Typography variant="body2" color="text.secondary">
+                    Used: {stats.disk.usedGB} GB
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    Available: {stats.disk.availableGB} GB
+                  </Typography>
+                </Box>
+                <LinearProgress
+                  variant="determinate"
+                  value={stats.disk.usagePercent}
+                  sx={{
+                    height: 10,
+                    borderRadius: 5,
+                    bgcolor: 'grey.200',
+                    '& .MuiLinearProgress-bar': {
+                      bgcolor: stats.disk.usagePercent > 90 ? 'error.main' : stats.disk.usagePercent > 75 ? 'warning.main' : 'primary.main',
+                    },
+                  }}
+                />
+                <Typography variant="body2" color="text.secondary" align="center" sx={{ mt: 1 }}>
+                  {stats.disk.usagePercent}% of {stats.disk.totalGB} GB
+                </Typography>
+              </Box>
+            </CardContent>
+          </Card>
+        </Grid>
+
+        {/* Recordings Statistics */}
+        <Grid item xs={12} md={6}>
+          <Card>
+            <CardContent>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+                <InfoIcon color="primary" />
+                <Typography variant="h6">Recordings Statistics</Typography>
+              </Box>
+              <Grid container spacing={2}>
+                <Grid item xs={6}>
+                  <Typography variant="body2" color="text.secondary">Total Count</Typography>
+                  <Typography variant="h5">{stats.recordings.totalCount.toLocaleString()}</Typography>
+                </Grid>
+                <Grid item xs={6}>
+                  <Typography variant="body2" color="text.secondary">Total Size</Typography>
+                  <Typography variant="h5">{stats.recordings.totalSizeGB} GB</Typography>
+                </Grid>
+                <Grid item xs={6}>
+                  <Typography variant="body2" color="text.secondary">Average Size</Typography>
+                  <Typography variant="body1">{stats.recordings.avgSizeMB} MB</Typography>
+                </Grid>
+                <Grid item xs={6}>
+                  <Typography variant="body2" color="text.secondary">Date Range</Typography>
+                  <Typography variant="body2">
+                    {stats.recordings.oldestRecording ? (
+                      <>
+                        {new Date(stats.recordings.oldestRecording).toLocaleDateString()} - {new Date(stats.recordings.newestRecording).toLocaleDateString()}
+                      </>
+                    ) : (
+                      'No recordings'
+                    )}
+                  </Typography>
+                </Grid>
+              </Grid>
+            </CardContent>
+          </Card>
+        </Grid>
+
+        {/* Cleanup Preview */}
+        {cleanupPreview && cleanupPreview.count > 0 && (
+          <Grid item xs={12}>
+            <Alert severity="warning" icon={<WarningIcon />}>
+              <Typography variant="body1" sx={{ fontWeight: 'bold', mb: 1 }}>
+                Retention Cleanup Preview
+              </Typography>
+              <Typography variant="body2">
+                {cleanupPreview.count} recordings ({cleanupPreview.totalSizeGB} GB) are scheduled for automatic deletion based on retention policies.
+              </Typography>
+            </Alert>
+          </Grid>
+        )}
+
+        {/* Per-Camera Breakdown */}
+        <Grid item xs={12}>
+          <Card>
+            <CardContent>
+              <Typography variant="h6" gutterBottom>
+                Storage by Camera
+              </Typography>
+              {stats.perCamera.length === 0 ? (
+                <Alert severity="info">No cameras with recordings</Alert>
+              ) : (
+                <TableContainer component={Paper} variant="outlined">
+                  <Table>
+                    <TableHead>
+                      <TableRow>
+                        <TableCell>Camera</TableCell>
+                        <TableCell align="right">Recordings</TableCell>
+                        <TableCell align="right">Size (GB)</TableCell>
+                        <TableCell align="right">Retention (Days)</TableCell>
+                        <TableCell>Oldest</TableCell>
+                        <TableCell>Newest</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {stats.perCamera.map((camera) => (
+                        <TableRow key={camera.cameraId}>
+                          <TableCell>
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                              <VideocamIcon fontSize="small" color="action" />
+                              {camera.cameraName}
+                            </Box>
+                          </TableCell>
+                          <TableCell align="right">
+                            {camera.recordingCount.toLocaleString()}
+                          </TableCell>
+                          <TableCell align="right">
+                            {camera.sizeGB.toFixed(2)}
+                          </TableCell>
+                          <TableCell align="right">
+                            <Chip label={camera.retentionDays} size="small" />
+                          </TableCell>
+                          <TableCell>{formatDate(camera.oldestRecording)}</TableCell>
+                          <TableCell>{formatDate(camera.newestRecording)}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+              )}
+            </CardContent>
+          </Card>
+        </Grid>
+      </Grid>
+
+      {/* Change Path Dialog */}
+      <Dialog open={changePathDialog} onClose={() => setChangePathDialog(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Change Storage Path</DialogTitle>
+        <DialogContent>
+          <Alert severity="warning" sx={{ mb: 2 }}>
+            Changing the storage path requires restarting the backend server. Existing recordings will not be moved automatically.
+          </Alert>
+          <TextField
+            fullWidth
+            label="New Storage Path"
+            value={newPath}
+            onChange={(e) => setNewPath(e.target.value)}
+            placeholder="/path/to/storage"
+            helperText="Enter an absolute path to an existing directory with write permissions"
+            sx={{ mt: 2 }}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setChangePathDialog(false)} disabled={updating}>
+            Cancel
+          </Button>
+          <Button
+            onClick={handleUpdatePath}
+            variant="contained"
+            disabled={updating || !newPath || newPath === pathInfo.currentPath}
+          >
+            {updating ? <CircularProgress size={24} /> : 'Update Path'}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Container>
   );
 }

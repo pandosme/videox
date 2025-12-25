@@ -149,6 +149,23 @@ async function initializeStorage() {
 }
 
 /**
+ * Check for configured storage path in database
+ */
+async function checkStoragePathConfig() {
+  try {
+    const SystemConfig = require('./models/SystemConfig');
+    const configuredPath = await SystemConfig.getValue('storagePath', null);
+
+    if (configuredPath && configuredPath !== process.env.STORAGE_PATH) {
+      logger.info(`Using configured storage path: ${configuredPath}`);
+      process.env.STORAGE_PATH = configuredPath;
+    }
+  } catch (error) {
+    logger.warn('Could not check storage path configuration:', error.message);
+  }
+}
+
+/**
  * Startup sequence
  */
 async function startup() {
@@ -173,6 +190,9 @@ async function startup() {
     }
 
     logger.info('Databases connected successfully');
+
+    // 1.5. Check for configured storage path
+    await checkStoragePathConfig();
 
     // 2. Initialize storage
     await initializeStorage();
