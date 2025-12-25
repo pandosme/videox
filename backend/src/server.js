@@ -215,8 +215,8 @@ async function startup() {
     databaseManager.startHealthMonitoring();
 
     // 7. Start API server
-    const server = app.listen(PORT, () => {
-      logger.info(`VideoX API server listening on port ${PORT}`);
+    const server = app.listen(PORT, '0.0.0.0', () => {
+      logger.info(`VideoX API server listening on 0.0.0.0:${PORT}`);
       logger.info('Service status: running');
     });
 
