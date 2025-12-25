@@ -1,0 +1,27 @@
+# Database Configuration
+MONGODB_URI=mongodb://localhost:27017/videox
+INFLUXDB_URL=http://localhost:8086
+INFLUXDB_TOKEN=your_influxdb_token_here
+INFLUXDB_ORG=videox
+INFLUXDB_BUCKET=videox
+
+# Storage Configuration
+STORAGE_PATH=/var/videox/recordings
+
+# Server Configuration
+API_PORT=3000
+NODE_ENV=development
+
+# Security Configuration
+JWT_SECRET=your_jwt_secret_key_here_change_in_production
+ENCRYPTION_KEY=your_encryption_key_here_change_in_production_32_chars_minimum
+
+# System Configuration
+GLOBAL_RETENTION_DAYS=30
+CLEANUP_SCHEDULE=0 */6 * * *
+MAX_CONCURRENT_STREAMS=20
+MAX_CONCURRENT_EXPORTS=3
+
+# Logging Configuration
+LOG_LEVEL=info
+LOG_PATH=/var/log/videox
