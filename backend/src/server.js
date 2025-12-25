@@ -63,6 +63,8 @@ app.use('/api/events', require('./routes/events'));
 app.use('/api/users', require('./routes/users'));
 app.use('/api/system', require('./routes/system'));
 app.use('/api/live', require('./routes/live'));
+app.use('/api/tokens', require('./routes/apiTokens'));
+app.use('/api/export', require('./routes/export'));
 
 // Serve HLS streams
 const hlsStreamManager = require('./services/stream/hlsStreamManager');
