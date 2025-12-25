@@ -11,18 +11,33 @@ Production: https://your-server/api
 
 All API endpoints (except `/auth/login` and `/system/health`) require authentication.
 
+VideoX supports two authentication methods:
+
+1. **JWT Tokens** - Short-lived tokens for user sessions (15-minute expiration)
+2. **API Tokens** - Long-lived tokens for external integrations and automation
+
 ### Request Headers
 
 ```
-Authorization: Bearer <access_token>
+Authorization: Bearer <token>
 Content-Type: application/json
 ```
 
-### Token Management
+### JWT Token Management
 
 - **Access Token**: 15-minute expiration, used for all API requests
 - **Refresh Token**: 7-day expiration, used to obtain new access tokens
 - Store both tokens securely (localStorage in browser, keychain in mobile)
+- Best for: Web UI, mobile apps, user sessions
+
+### API Token Management
+
+- **API Tokens**: Long-lived bearer tokens (configurable expiration or never)
+- Created by users in the Settings UI
+- Each token has a name, optional expiration date, and can be enabled/disabled
+- Token value is only shown once upon creation
+- Best for: External integrations, automation scripts, third-party applications
+- See [API Token Endpoints](#api-token-endpoints) for management
 
 ## Error Responses
 
@@ -63,6 +78,10 @@ All errors follow this format:
 - `CAMERA_CONNECTION_FAILED`: Failed to connect to camera
 - `CAMERA_INACTIVE`: Camera is not active
 - `RECORDING_PROTECTED`: Cannot delete protected recording
+- `TOKEN_NOT_FOUND`: API token not found
+- `TOKEN_EXPIRED`: API token has expired
+- `NO_RECORDINGS`: No recordings found for specified time range
+- `FILES_NOT_FOUND`: Recording files are missing from disk
 - `RATE_LIMIT_EXCEEDED`: Too many requests
 
 ---
@@ -1116,6 +1135,304 @@ Delete user (admin only).
 
 ---
 
+## API Token Endpoints
+
+### GET /tokens
+
+Get list of user's API tokens.
+
+**Success Response (200 OK)**
+```json
+[
+  {
+    "_id": "676c1a2b3c4d5e6f7a8b9c0d",
+    "userId": "507f1f77bcf86cd799439011",
+    "name": "Mobile App Integration",
+    "active": true,
+    "lastUsed": "2025-12-25T17:30:00.000Z",
+    "expiresAt": "2026-01-24T17:00:00.000Z",
+    "createdAt": "2025-12-18T10:00:00.000Z",
+    "updatedAt": "2025-12-25T17:30:00.000Z"
+  },
+  {
+    "_id": "676c1a2b3c4d5e6f7a8b9c0e",
+    "name": "Automation Script",
+    "active": true,
+    "lastUsed": null,
+    "expiresAt": null,
+    "createdAt": "2025-12-20T14:00:00.000Z",
+    "updatedAt": "2025-12-20T14:00:00.000Z"
+  }
+]
+```
+
+**Notes**
+- Token values are never returned (security)
+- Tokens are user-scoped (users only see their own tokens)
+- Sorted by creation date (newest first)
+
+**Permissions**: All roles
+
+---
+
+### POST /tokens
+
+Create a new API token.
+
+**Request Body**
+```json
+{
+  "name": "Mobile App Integration",
+  "expiresInDays": 30
+}
+```
+
+**Field Descriptions**
+- `name`: Descriptive name for the token (required)
+- `expiresInDays`: Number of days until expiration (optional)
+  - `0` or omitted: Never expires
+  - `7`: Expires in 7 days
+  - `30`: Expires in 30 days
+  - `90`: Expires in 90 days
+  - `365`: Expires in 365 days
+
+**Success Response (201 Created)**
+```json
+{
+  "_id": "676c1a2b3c4d5e6f7a8b9c0d",
+  "name": "Mobile App Integration",
+  "token": "vx_1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f",
+  "expiresAt": "2026-01-24T17:00:00.000Z",
+  "active": true,
+  "createdAt": "2025-12-25T17:00:00.000Z",
+  "warning": "Save this token now - it will not be shown again!"
+}
+```
+
+**Important**
+- The `token` field is only returned once upon creation
+- Store the token securely - it cannot be retrieved later
+- Token format: `vx_` prefix + 32-byte base64url random string
+
+**Error Response (400 Bad Request)**
+```json
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Token name is required"
+  }
+}
+```
+
+**Permissions**: All roles
+
+---
+
+### DELETE /tokens/:id
+
+Delete an API token.
+
+**URL Parameters**
+- `id`: Token MongoDB ObjectId
+
+**Success Response (200 OK)**
+```json
+{
+  "success": true
+}
+```
+
+**Error Response (404 Not Found)**
+```json
+{
+  "error": {
+    "code": "TOKEN_NOT_FOUND",
+    "message": "API token not found"
+  }
+}
+```
+
+**Notes**
+- Users can only delete their own tokens
+- Deletion is immediate and irreversible
+- Audit log entry is created
+
+**Permissions**: All roles (own tokens only)
+
+---
+
+### PATCH /tokens/:id/toggle
+
+Toggle API token active status (enable/disable).
+
+**URL Parameters**
+- `id`: Token MongoDB ObjectId
+
+**Success Response (200 OK)**
+```json
+{
+  "_id": "676c1a2b3c4d5e6f7a8b9c0d",
+  "name": "Mobile App Integration",
+  "active": false,
+  "expiresAt": "2026-01-24T17:00:00.000Z",
+  "lastUsed": "2025-12-25T17:30:00.000Z"
+}
+```
+
+**Notes**
+- Inactive tokens are rejected during authentication
+- Useful for temporarily disabling access without deleting
+- Can be re-enabled by toggling again
+- Audit log entry is created
+
+**Permissions**: All roles (own tokens only)
+
+---
+
+## Export/Stream API
+
+### GET /export
+
+Export or stream recordings for a specific time range.
+
+**Authentication**
+- Supports both JWT tokens and API tokens
+- Use API tokens for external integrations
+
+**Query Parameters**
+- `cameraId` (required): Camera serial number (e.g., B8A44F3024BB)
+- `startTime` (required): Start time in epoch seconds (e.g., 1735146000)
+- `duration` (required): Duration in seconds (e.g., 60)
+- `type` (optional): Export type - `stream` (default) or `file`
+
+**Request Headers**
+```
+Authorization: Bearer <jwt_token_or_api_token>
+```
+
+**Success Response - Stream (200 OK)**
+- Content-Type: `video/mp4`
+- Body: MP4 video stream
+- Supports HTTP range requests for seeking
+
+**Success Response - File Download (200 OK)**
+- Content-Type: `video/mp4`
+- Content-Disposition: `attachment; filename="export.mp4"`
+- Body: MP4 video file
+
+**Behavior**
+
+1. **Single Recording**: If the time range matches a single recording, it's served directly with range request support for seeking
+
+2. **Multiple Recordings**: If the time range spans multiple 60-second segments, they are concatenated using FFmpeg:
+   - Uses `-c copy` (no re-encoding, fast)
+   - Uses `-movflags +faststart` for streaming support
+   - Seamless playback across segment boundaries
+
+**Error Responses**
+
+400 Bad Request (Missing Parameter):
+```json
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "cameraId is required"
+  }
+}
+```
+
+400 Bad Request (Invalid Duration):
+```json
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "duration (seconds) must be a positive number"
+  }
+}
+```
+
+404 Not Found (Camera Not Found):
+```json
+{
+  "error": {
+    "code": "CAMERA_NOT_FOUND",
+    "message": "Camera not found"
+  }
+}
+```
+
+404 Not Found (No Recordings):
+```json
+{
+  "error": {
+    "code": "NO_RECORDINGS",
+    "message": "No recordings found for specified time range"
+  }
+}
+```
+
+404 Not Found (Files Missing):
+```json
+{
+  "error": {
+    "code": "FILES_NOT_FOUND",
+    "message": "Some recording files are missing",
+    "details": {
+      "missingCount": 3
+    }
+  }
+}
+```
+
+**Example - Stream Recording**
+```bash
+curl -H "Authorization: Bearer <api_token>" \
+  "http://localhost:3002/api/export?cameraId=B8A44F3024BB&startTime=1735146000&duration=300&type=stream" \
+  --output recording.mp4
+```
+
+**Example - Download as File**
+```bash
+curl -H "Authorization: Bearer <api_token>" \
+  "http://localhost:3002/api/export?cameraId=B8A44F3024BB&startTime=1735146000&duration=60&type=file" \
+  --output recording.mp4
+```
+
+**Example - Calculate Epoch Time (JavaScript)**
+```javascript
+const startDate = new Date('2025-12-25T17:00:00Z');
+const startTime = Math.floor(startDate.getTime() / 1000); // 1735146000
+
+// Export 5 minutes starting at this time
+const duration = 5 * 60; // 300 seconds
+
+const url = `/api/export?cameraId=B8A44F3024BB&startTime=${startTime}&duration=${duration}&type=stream`;
+```
+
+**Example - Calculate Epoch Time (Python)**
+```python
+from datetime import datetime
+
+start_date = datetime(2025, 12, 25, 17, 0, 0)
+start_time = int(start_date.timestamp())  # 1735146000
+
+# Export 5 minutes
+duration = 5 * 60  # 300 seconds
+
+url = f"/api/export?cameraId=B8A44F3024BB&startTime={start_time}&duration={duration}&type=file"
+```
+
+**Use Cases**
+- Export recordings for archival purposes
+- Download clips for evidence or sharing
+- Integrate with external video management systems
+- Automated backup scripts
+- Third-party applications
+
+**Permissions**: All roles (requires valid JWT or API token)
+
+---
+
 ## Event Endpoints
 
 ### GET /events
@@ -1374,12 +1691,16 @@ curl http://localhost:3002/api/recordings/676c0a1f8e9b4c001a2b3c4d/stream \
 
 ### Version 1.0.0 (2025-12-25)
 - Initial API release
-- Authentication endpoints
+- Authentication endpoints (JWT-based)
 - Camera management
 - Recording management
 - Live HLS streaming
-- Storage statistics
+- Storage statistics and management
+- API token system for external integrations
+- Export/stream API for recording downloads
 - Health check endpoint
+- User management
+- Event logging
 
 ### Future Versions
 - 1.1.0: WebSocket support for real-time events
