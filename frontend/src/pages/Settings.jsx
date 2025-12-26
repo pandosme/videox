@@ -242,14 +242,19 @@ Query Parameters:
   - startTime: Start time in epoch seconds (required)
   - duration: Duration in seconds (required)
   - type: 'stream' or 'file' (default: 'stream')
+  - token: Your API token (alternative to header)
 
-Headers:
-  Authorization: Bearer <your_api_token>
+Method 1 - Authorization Header:
+  curl -H "Authorization: Bearer <token>" \\
+    "/api/export?cameraId=B8A44F3024BB&startTime=1735146000&duration=60" \\
+    -o recording.mp4
 
-Example:
-curl -H "Authorization: Bearer <token>" \\
-  "/api/export?cameraId=B8A44F3024BB&startTime=1735146000&duration=60&type=file" \\
-  -o recording.mp4`}
+Method 2 - Query Parameter (simpler for VLC, etc):
+  curl "/api/export?cameraId=B8A44F3024BB&startTime=1735146000&duration=60&token=<token>" \\
+    -o recording.mp4
+
+VLC Network Stream:
+  http://server:3002/api/export?cameraId=B8A44F3024BB&startTime=1735146000&duration=60&token=<token>`}
                 </Typography>
               </Box>
             </CardContent>

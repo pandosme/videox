@@ -7,23 +7,34 @@ const logger = require('../../utils/logger');
  * API Authentication Middleware
  * Supports both JWT tokens and long-lived API tokens
  *
- * JWT: Authorization: Bearer <jwt_token>
- * API: Authorization: Bearer <api_token>
+ * Methods:
+ * 1. Authorization header: Authorization: Bearer <token>
+ * 2. Query parameter: ?token=<token> (for simple clients like VLC)
  */
 const apiAuth = async (req, res, next) => {
   try {
+    // Try to get token from Authorization header first
+    let token = null;
     const authHeader = req.headers.authorization;
 
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      token = authHeader.substring(7);
+    }
+
+    // Fallback to query parameter for simple clients (VLC, curl, etc.)
+    if (!token && req.query.token) {
+      token = req.query.token;
+      logger.debug('Using token from query parameter');
+    }
+
+    if (!token) {
       return res.status(401).json({
         error: {
           code: 'UNAUTHORIZED',
-          message: 'Missing or invalid authorization header',
+          message: 'Missing authentication token (provide via Authorization header or ?token= parameter)',
         },
       });
     }
-
-    const token = authHeader.substring(7);
 
     // Try JWT first
     try {

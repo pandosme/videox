@@ -1310,19 +1310,25 @@ Toggle API token active status (enable/disable).
 Export or stream recordings for a specific time range.
 
 **Authentication**
-- Supports both JWT tokens and API tokens
-- Use API tokens for external integrations
+
+Two authentication methods are supported:
+
+1. **Authorization Header** (recommended for API clients):
+   ```
+   Authorization: Bearer <token>
+   ```
+
+2. **Query Parameter** (for simple clients like VLC, media players):
+   ```
+   ?token=<your_api_token>
+   ```
 
 **Query Parameters**
 - `cameraId` (required): Camera serial number (e.g., B8A44F3024BB)
 - `startTime` (required): Start time in epoch seconds (e.g., 1735146000)
 - `duration` (required): Duration in seconds (e.g., 60)
 - `type` (optional): Export type - `stream` (default) or `file`
-
-**Request Headers**
-```
-Authorization: Bearer <jwt_token_or_api_token>
-```
+- `token` (optional): API token for authentication (alternative to Authorization header)
 
 **Success Response - Stream (200 OK)**
 - Content-Type: `video/mp4`
@@ -1398,17 +1404,28 @@ Authorization: Bearer <jwt_token_or_api_token>
 }
 ```
 
-**Example - Stream Recording**
+**Example - Stream Recording (Authorization Header)**
 ```bash
 curl -H "Authorization: Bearer <api_token>" \
   "http://localhost:3002/api/export?cameraId=B8A44F3024BB&startTime=1735146000&duration=300&type=stream" \
   --output recording.mp4
 ```
 
+**Example - Stream Recording (Query Parameter - Simpler)**
+```bash
+curl "http://localhost:3002/api/export?cameraId=B8A44F3024BB&startTime=1735146000&duration=300&type=stream&token=<api_token>" \
+  --output recording.mp4
+```
+
+**Example - VLC Media Player**
+```
+Open Network Stream:
+http://your-server:3002/api/export?cameraId=B8A44F3024BB&startTime=1735146000&duration=300&token=<api_token>
+```
+
 **Example - Download as File**
 ```bash
-curl -H "Authorization: Bearer <api_token>" \
-  "http://localhost:3002/api/export?cameraId=B8A44F3024BB&startTime=1735146000&duration=60&type=file" \
+curl "http://localhost:3002/api/export?cameraId=B8A44F3024BB&startTime=1735146000&duration=60&type=file&token=<api_token>" \
   --output recording.mp4
 ```
 
