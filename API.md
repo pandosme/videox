@@ -2,10 +2,24 @@
 
 ## Base URL
 
+**Important**: External clients and integrations connect directly to the backend API server on port 3002, not the frontend UI (port 5174).
+
 ```
 Development: http://localhost:3002/api
-Production: https://your-server/api
+Production: http://your-server:3002/api
 ```
+
+**Architecture**:
+- **Backend API** (Port 3002): RESTful API for all client integrations
+  - Mobile applications
+  - Third-party integrations
+  - Automation scripts
+  - External video players
+
+- **Frontend UI** (Port 5174): Web-based user interface (development only)
+  - For human users via web browser
+  - Proxies API requests to port 3002
+  - Not intended for external client integration
 
 ## Authentication
 
