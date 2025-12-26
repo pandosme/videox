@@ -142,14 +142,23 @@ app.use(errorHandler);
 async function getStorageInfo() {
   try {
     const storagePath = process.env.STORAGE_PATH;
-    const stats = await fs.stat(storagePath);
+    const { execSync } = require('child_process');
 
-    // Note: This is a simplified version. In production, use a library like 'diskusage'
+    // Get disk usage using df command (works in Docker and Linux)
+    const dfOutput = execSync(`df -BG "${storagePath}" | tail -1`).toString();
+    const parts = dfOutput.split(/\s+/);
+
+    // df output: Filesystem 1G-blocks Used Available Use% Mounted
+    const totalGB = parseInt(parts[1]) || 0;
+    const usedGB = parseInt(parts[2]) || 0;
+    const availableGB = parseInt(parts[3]) || 0;
+    const usagePercent = parseInt(parts[4]) || 0;
+
     return {
-      totalGB: 0,
-      usedGB: 0,
-      availableGB: 100, // Placeholder
-      usagePercent: 0,
+      totalGB,
+      usedGB,
+      availableGB,
+      usagePercent,
     };
   } catch (error) {
     logger.error('Failed to get storage info:', error);

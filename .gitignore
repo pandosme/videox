@@ -63,3 +63,8 @@ hls/
 # OS files
 Thumbs.db
 .DS_Store
+
+# Docker files (kept local, not in GitHub)
+Dockerfile
+docker-compose.yml
+.dockerignore
