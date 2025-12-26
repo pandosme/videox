@@ -61,6 +61,35 @@ const limiter = rateLimit({
 });
 app.use('/api/', limiter);
 
+// API Request Logging Middleware
+app.use('/api', (req, res, next) => {
+  const startTime = Date.now();
+  const clientIp = req.ip || req.connection.remoteAddress;
+  const userAgent = req.get('user-agent') || 'Unknown';
+
+  // Log request
+  logger.info(`API Request: ${req.method} ${req.originalUrl} from ${clientIp}`);
+  logger.debug(`User-Agent: ${userAgent}`);
+
+  // Capture response
+  res.on('finish', () => {
+    const duration = Date.now() - startTime;
+    const authType = req.authType || 'unauthenticated';
+    const username = req.user?.username || 'anonymous';
+
+    logger.info(
+      `API Response: ${req.method} ${req.originalUrl} - ` +
+      `Status: ${res.statusCode} - ` +
+      `Duration: ${duration}ms - ` +
+      `Auth: ${authType} - ` +
+      `User: ${username} - ` +
+      `IP: ${clientIp}`
+    );
+  });
+
+  next();
+});
+
 // API Routes
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/cameras', require('./routes/cameras'));
