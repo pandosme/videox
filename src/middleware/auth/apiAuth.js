@@ -39,6 +39,19 @@ const apiAuth = async (req, res, next) => {
     // Try JWT first
     try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+      // Handle single-user admin system (id: 'admin' from .env)
+      if (decoded.id === 'admin') {
+        req.user = {
+          id: 'admin',
+          username: decoded.username || process.env.ADMIN_USERNAME,
+          role: 'admin',
+        };
+        req.authType = 'jwt';
+        return next();
+      }
+
+      // Handle database users (multi-user system)
       const user = await User.findById(decoded.id).select('-password');
 
       if (!user || !user.active) {
