@@ -47,7 +47,8 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // Trust proxy for accurate client IP detection
-app.set('trust proxy', true);
+// 'loopback' trusts only localhost/127.0.0.1 (safe for local dev and Docker host mode)
+app.set('trust proxy', 'loopback');
 
 // Rate limiting
 const limiter = rateLimit({

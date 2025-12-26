@@ -10,6 +10,7 @@ const Camera = require('../models/Camera');
 const Recording = require('../models/Recording');
 const SystemConfig = require('../models/SystemConfig');
 const logger = require('../utils/logger');
+const recordingManager = require('../services/recording/recordingManager');
 
 const execAsync = promisify(exec);
 
@@ -582,12 +583,24 @@ router.delete('/flush-all', authorize(['admin']), async (req, res, next) => {
 
     logger.warn(`FLUSH COMPLETED: Deleted ${deletedDbRecords} DB records and ${deletedFiles} files`);
 
+    // Restart all recordings to clear in-memory state
+    logger.info('Restarting all recordings after flush...');
+    try {
+      await recordingManager.stopAllRecordings();
+      await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
+      await recordingManager.initialize();
+      logger.info('All recordings restarted successfully');
+    } catch (restartError) {
+      logger.error('Error restarting recordings after flush:', restartError);
+      errors.push(`Failed to restart recordings: ${restartError.message}`);
+    }
+
     res.json({
       success: true,
       deletedDbRecords,
       deletedFiles,
       errors: errors.slice(0, 10),
-      message: `Successfully flushed all recordings: ${deletedDbRecords} database records and ${deletedFiles} files deleted`,
+      message: `Successfully flushed all recordings: ${deletedDbRecords} database records and ${deletedFiles} files deleted. Recordings restarted.`,
     });
   } catch (error) {
     logger.error('Error flushing all recordings:', error);
