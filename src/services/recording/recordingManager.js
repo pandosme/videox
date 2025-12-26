@@ -16,6 +16,7 @@ class RecordingManager {
   constructor() {
     this.recordings = new Map(); // Map<cameraId, recordingProcess>
     this.storageBasePath = process.env.STORAGE_PATH || '/tmp/videox-storage';
+    this.monitoringInterval = null;
   }
 
   /**
@@ -28,6 +29,9 @@ class RecordingManager {
 
       // Resume recordings for cameras that were recording before shutdown
       await this.resumeActiveRecordings();
+
+      // Start monitoring for cameras that should be recording
+      this.startMonitoring();
     } catch (error) {
       logger.error('Failed to initialize recording storage:', error);
       throw error;
@@ -405,6 +409,74 @@ class RecordingManager {
    */
   getAllRecordings() {
     return Array.from(this.recordings.keys()).map((cameraId) => this.getRecordingInfo(cameraId));
+  }
+
+  /**
+   * Check recording health and restart if needed
+   * @private
+   */
+  async checkRecordingHealth() {
+    try {
+      // Find all cameras that should be recording (continuous mode, active)
+      const cameras = await Camera.find({
+        active: true,
+        'recordingSettings.mode': 'continuous',
+      });
+
+      for (const camera of cameras) {
+        const cameraId = camera._id;
+        const isRecording = this.recordings.has(cameraId);
+
+        // If camera should be recording but isn't, start it
+        if (!isRecording) {
+          logger.warn(`Camera ${cameraId} should be recording but isn't. Auto-starting...`);
+          try {
+            await this.startRecording(camera);
+            logger.info(`Auto-started recording for camera ${cameraId}`);
+          } catch (error) {
+            logger.error(`Failed to auto-start recording for camera ${cameraId}:`, error);
+          }
+        }
+      }
+    } catch (error) {
+      logger.error('Error during recording health check:', error);
+    }
+  }
+
+  /**
+   * Start monitoring for cameras that should be recording
+   * Checks every 60 seconds
+   */
+  startMonitoring() {
+    if (this.monitoringInterval) {
+      logger.warn('Monitoring already started');
+      return;
+    }
+
+    logger.info('Starting recording health monitoring (60 second interval)');
+
+    // Run health check every 60 seconds
+    this.monitoringInterval = setInterval(() => {
+      this.checkRecordingHealth().catch((err) => {
+        logger.error('Error in monitoring interval:', err);
+      });
+    }, 60000);
+
+    // Also run immediately on startup
+    this.checkRecordingHealth().catch((err) => {
+      logger.error('Error in initial health check:', err);
+    });
+  }
+
+  /**
+   * Stop monitoring
+   */
+  stopMonitoring() {
+    if (this.monitoringInterval) {
+      clearInterval(this.monitoringInterval);
+      this.monitoringInterval = null;
+      logger.info('Recording health monitoring stopped');
+    }
   }
 }
 

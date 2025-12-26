@@ -1,658 +1,284 @@
-# VideoX - Video Management System
+# VideoX Server
 
-A comprehensive local network video management system for Axis IP cameras with continuous recording, live streaming, and intelligent retention management.
+VideoX is a Video Management System (VMS) backend for managing Axis network cameras with continuous recording, live streaming, and storage management capabilities.
 
-## Overview
+## Features
 
-VideoX is a self-hosted VMS (Video Management System) designed for home and small business networks. It provides professional-grade video surveillance capabilities using Axis IP cameras with an intuitive web interface.
-
-### Key Features
-
-- **Camera Management**: Add and configure Axis IP cameras via VAPIX API with HTTP Digest authentication
-- **Continuous Recording**: Automatic 60-second segmented MP4 recordings organized by date/time
-- **Live Streaming**: View live feeds from up to 4 cameras simultaneously using HLS streaming
-- **Recording Playback**: Browse and playback recordings with date/time filtering
-- **Retention Management**: Configurable retention policies with automatic cleanup
-- **User Management**: Role-based access control (Admin, Operator, Viewer)
-- **Storage Management**: Monitor disk usage and per-camera storage statistics
-- **Audit Trail**: Track all system actions and camera events
-
-## Screenshots
-
-### Live View (2x2 Grid)
-Real-time HLS streaming from multiple cameras with sub-5 second latency.
-
-### Recording Browser
-Browse recordings by camera and date range, with video playback and download capabilities.
-
-### Camera Management
-Add, configure, and monitor Axis cameras with automatic capability detection.
-
-## Technology Stack
-
-### Backend
-- **Node.js 20.x** - JavaScript runtime
-- **Express.js** - Web framework
-- **MongoDB** - Camera and recording metadata
-- **InfluxDB** - Time-series event data (future)
-- **FFmpeg** - Video processing (RTSP to HLS/MP4)
-- **JWT** - Authentication
-- **bcrypt** - Password hashing
-- **AES-256** - Camera credential encryption
-
-### Frontend
-- **React 19** - UI framework
-- **Vite** - Build tool and dev server
-- **Material-UI (MUI)** - Component library
-- **Video.js** - Video player with HLS support
-- **Axios** - HTTP client
-- **React Router** - Client-side routing
-
-### Infrastructure
-- **VAPIX API** - Axis camera communication
-- **HTTP Digest Auth** - Camera authentication
-- **HLS** - Live video streaming protocol
-- **MP4** - Recording container format
-
-## Project Structure
-
-```
-videox/
-├── backend/                    # Node.js backend
-│   ├── src/
-│   │   ├── config/              # Database connections
-│   │   │   └── database.js      # MongoDB & InfluxDB managers
-│   │   ├── middleware/          # Express middleware
-│   │   │   ├── auth/            # Authentication & authorization
-│   │   │   └── errorHandler/    # Error handling
-│   │   ├── models/              # MongoDB schemas
-│   │   │   ├── Camera.js        # Camera configuration
-│   │   │   ├── Recording.js     # Recording metadata
-│   │   │   ├── User.js          # User accounts
-│   │   │   ├── AuditLog.js      # Audit trail
-│   │   │   └── SystemConfig.js  # System settings
-│   │   ├── routes/              # API endpoints
-│   │   │   ├── auth.js          # Authentication
-│   │   │   ├── cameras.js       # Camera management
-│   │   │   ├── recordings.js    # Recording management
-│   │   │   ├── live.js          # Live streaming
-│   │   │   ├── storage.js       # Storage stats
-│   │   │   ├── events.js        # Event timeline
-│   │   │   ├── users.js         # User management
-│   │   │   └── system.js        # Health & info
-│   │   ├── services/            # Business logic
-│   │   │   ├── camera/
-│   │   │   │   └── vapixService.js      # Axis VAPIX API client
-│   │   │   ├── recording/
-│   │   │   │   └── recordingManager.js  # Continuous recording
-│   │   │   ├── stream/
-│   │   │   │   └── hlsStreamManager.js  # HLS live streaming
-│   │   │   └── retention/
-│   │   │       └── retentionManager.js  # Automatic cleanup
-│   │   ├── utils/               # Utilities
-│   │   │   ├── encryption.js    # AES-256 encryption
-│   │   │   ├── jwt.js           # JWT token management
-│   │   │   ├── logger.js        # Winston logging
-│   │   │   └── validators.js    # Input validation
-│   │   └── server.js            # Express app & startup
-│   ├── package.json
-│   └── .env.example
-│
-├── frontend/                   # React frontend
-│   ├── src/
-│   │   ├── components/          # Reusable components
-│   │   │   └── layout/          # Layout components
-│   │   │       ├── Layout.jsx   # Main layout wrapper
-│   │   │       ├── Navbar.jsx   # Top navigation bar
-│   │   │       └── Sidebar.jsx  # Side navigation menu
-│   │   ├── context/             # React contexts
-│   │   │   ├── AuthContext.jsx  # Authentication state
-│   │   │   └── ToastContext.jsx # Notification system
-│   │   ├── pages/               # Page components
-│   │   │   ├── Dashboard.jsx    # System overview
-│   │   │   ├── Cameras.jsx      # Camera management
-│   │   │   ├── LiveView.jsx     # Live streaming (2x2 grid)
-│   │   │   ├── Recordings.jsx   # Recording browser & playback
-│   │   │   ├── Events.jsx       # Event timeline
-│   │   │   ├── Storage.jsx      # Storage statistics
-│   │   │   ├── Settings.jsx     # User preferences
-│   │   │   └── Login.jsx        # Login page
-│   │   ├── services/            # API clients
-│   │   │   ├── api.js           # Axios instance
-│   │   │   ├── cameras.js       # Camera API
-│   │   │   ├── recordings.js    # Recording API
-│   │   │   └── live.js          # Live streaming API
-│   │   ├── App.jsx              # Root component & routing
-│   │   └── main.jsx             # React entry point
-│   ├── package.json
-│   ├── vite.config.js
-│   └── .env.example
-│
-├── ARCHITECTURE.md             # System architecture documentation
-├── API.md                      # API endpoint documentation
-└── README.md                   # This file
-```
+- **Camera Management**: Support for Axis network cameras via VAPIX API
+- **Continuous Recording**: 60-second MP4 segments with automatic cleanup
+- **Live Streaming**: HLS streaming with 2-second segments
+- **Storage Management**: Automated retention policies and integrity checks
+- **Recording Export**: API endpoints for video export and streaming
+- **Health Monitoring**: Automatic recording restart and health checks
+- **Single-User System**: Simple authentication with admin credentials
 
 ## Prerequisites
 
-- **Node.js 20.x LTS** - [Download](https://nodejs.org/)
-- **MongoDB 7.x** - [Installation Guide](https://www.mongodb.com/docs/manual/installation/)
-- **InfluxDB 2.x** - [Installation Guide](https://docs.influxdata.com/influxdb/v2/install/)
-- **FFmpeg** - Must include H.264 codec support
-  ```bash
-  # Ubuntu/Debian
-  sudo apt-get install ffmpeg
-
-  # Verify H.264 support
-  ffmpeg -codecs | grep h264
-  ```
+- **Node.js**: v16 or higher
+- **MongoDB**: v4.4 or higher
+- **FFmpeg**: Required for video processing
+- **Axis Network Cameras**: For video capture
 
 ## Installation
 
-### 1. Clone Repository
+### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/yourusername/videox.git
+git clone <your-repo-url>
 cd videox
 ```
 
 ### 2. Install Dependencies
 
-#### Backend
 ```bash
-cd backend
 npm install
 ```
 
-#### Frontend
+### 3. Install FFmpeg
+
+**Ubuntu/Debian:**
 ```bash
-cd frontend
-npm install
+sudo apt update
+sudo apt install ffmpeg
 ```
 
-### 3. Setup Databases
-
-#### MongoDB
+**macOS:**
 ```bash
-# Install MongoDB 7.x (Ubuntu/Debian)
-wget -qO - https://www.mongodb.org/static/pgp/server-7.0.asc | sudo apt-key add -
-echo "deb [ arch=amd64,arm64 ] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/7.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-7.0.list
-sudo apt-get update
-sudo apt-get install -y mongodb-org
-
-# Start MongoDB
-sudo systemctl start mongod
-sudo systemctl enable mongod
-
-# Verify MongoDB is running
-mongosh --eval "db.adminCommand('ping')"
+brew install ffmpeg
 ```
 
-#### InfluxDB
+**Verify installation:**
 ```bash
-# Install InfluxDB 2.x (Ubuntu/Debian)
-wget https://dl.influxdata.com/influxdb/releases/influxdb2-2.7.4-amd64.deb
-sudo dpkg -i influxdb2-2.7.4-amd64.deb
-
-# Start InfluxDB
-sudo systemctl start influxdb
-sudo systemctl enable influxdb
-
-# Setup via Web UI
-# Open http://localhost:8086
-# Create organization: videox
-# Create bucket: videox
-# Save the API token
+ffmpeg -version
 ```
 
-### 4. Configure Environment Variables
+### 4. Set Up MongoDB
 
-#### Backend Configuration
+Install and start MongoDB, or use a remote MongoDB instance.
 
+**Ubuntu/Debian:**
 ```bash
-cd backend
+sudo apt install mongodb
+sudo systemctl start mongodb
+sudo systemctl enable mongodb
+```
+
+Create a database and user:
+```bash
+mongosh
+use videox
+db.createUser({
+  user: "admin",
+  pwd: "your_password",
+  roles: ["readWrite", "dbAdmin"]
+})
+```
+
+### 5. Configure Environment Variables
+
+Copy the example environment file:
+```bash
 cp .env.example .env
 ```
 
-Edit `backend/.env`:
-```env
+Edit `.env` with your configuration:
+```bash
+# Admin Credentials
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=your_secure_password
+
 # Database Configuration
-MONGODB_URI=mongodb://localhost:27017/videox
-INFLUXDB_URL=http://localhost:8086
-INFLUXDB_TOKEN=your_influxdb_token_here
-INFLUXDB_ORG=videox
-INFLUXDB_BUCKET=videox
+MONGODB_URI=mongodb://admin:password@localhost:27017/videox?authSource=admin
 
 # Storage Configuration
-STORAGE_PATH=/home/fred/videox-storage
+STORAGE_PATH=/var/lib/videox-storage
+GLOBAL_RETENTION_DAYS=30
 
 # Server Configuration
 API_PORT=3002
-NODE_ENV=development
+NODE_ENV=production
 
-# Security Configuration (CHANGE THESE IN PRODUCTION!)
+# Security Configuration
 JWT_SECRET=your_jwt_secret_min_32_characters_long
-ENCRYPTION_KEY=your_encryption_key_exactly_32_chars
+ENCRYPTION_KEY=your_32_character_encryption_key
 
-# Retention Configuration
-GLOBAL_RETENTION_DAYS=30
-CLEANUP_SCHEDULE=0 * * * *
+# Performance Limits
+MAX_CONCURRENT_STREAMS=20
+MAX_CONCURRENT_EXPORTS=3
+
+# Logging
+LOG_LEVEL=info
+LOG_PATH=/var/log/videox
 ```
 
-**Important Security Notes:**
-- `JWT_SECRET`: Must be at least 32 characters, random string
-- `ENCRYPTION_KEY`: Must be exactly 32 characters for AES-256
-- Generate secure keys:
-  ```bash
-  # Generate JWT secret
-  node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
-
-  # Generate encryption key
-  node -e "console.log(require('crypto').randomBytes(16).toString('hex'))"
-  ```
-
-#### Frontend Configuration
+### 6. Create Storage Directory
 
 ```bash
-cd frontend
-cp .env.example .env
+sudo mkdir -p /var/lib/videox-storage
+sudo chown $USER:$USER /var/lib/videox-storage
 ```
 
-Edit `frontend/.env`:
-```env
-VITE_API_URL=http://localhost:3002/api
-```
+## Running the Server
 
-### 5. Create Storage Directory
+### Development Mode
 
 ```bash
-# Create storage directory
-mkdir -p /home/fred/videox-storage/recordings
-mkdir -p /home/fred/videox-storage/hls
-
-# Set permissions
-chmod 750 /home/fred/videox-storage
-```
-
-### 6. Create Initial Admin User
-
-Connect to MongoDB and create the admin user:
-
-```bash
-mongosh
-```
-
-```javascript
-use videox
-
-// Hash password with bcrypt (cost factor 10)
-// For password "admin123", the hash is:
-db.users.insertOne({
-  username: "admin",
-  password: "$2b$10$rBwN5P8K5K5K5K5K5K5K5euJ5J5J5J5J5J5J5J5J5J5J5J5J5J5J5",
-  role: "admin",
-  active: true,
-  createdAt: new Date(),
-  updatedAt: new Date()
-})
-
-// Or generate your own hash:
-```
-
-Generate custom password hash:
-```javascript
-// In Node.js REPL or separate script
-const bcrypt = require('bcrypt');
-bcrypt.hash('YourSecurePassword', 10).then(hash => console.log(hash));
-```
-
-## Development
-
-### Start Backend
-
-```bash
-cd backend
 npm run dev
 ```
 
-Backend will start on `http://localhost:3002`
+The server will start on `http://localhost:3002` (or the port specified in your `.env` file).
 
-Logs: Console output with Winston formatting
-
-### Start Frontend
+### Production Mode
 
 ```bash
-cd frontend
-npm run dev
+npm start
 ```
 
-Frontend will start on `http://localhost:5174`
-
-The frontend proxies API requests to `http://localhost:3002/api` and HLS streams to `http://localhost:3002/hls`.
-
-### Access Application
-
-1. Open browser: `http://localhost:5174`
-2. Login with credentials:
-   - Username: `admin`
-   - Password: `admin123` (or your custom password)
-
-## Production Deployment
-
-### Build Frontend
+### Using PM2 (Recommended for Production)
 
 ```bash
-cd frontend
-npm run build
-```
-
-This creates optimized production build in `frontend/dist/`.
-
-### Serve with Nginx
-
-Example Nginx configuration:
-
-```nginx
-server {
-    listen 80;
-    server_name videox.local;
-
-    # Frontend static files
-    location / {
-        root /var/www/videox;
-        try_files $uri $uri/ /index.html;
-    }
-
-    # API proxy
-    location /api {
-        proxy_pass http://localhost:3002;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_set_header Host $host;
-        proxy_cache_bypass $http_upgrade;
-    }
-
-    # HLS streaming
-    location /hls {
-        proxy_pass http://localhost:3002;
-        proxy_http_version 1.1;
-        proxy_buffering off;
-    }
-}
-```
-
-### Process Manager (PM2)
-
-```bash
-# Install PM2
+# Install PM2 globally
 npm install -g pm2
 
-# Start backend
-cd backend
-pm2 start src/server.js --name videox-backend
+# Start the server
+pm2 start src/server.js --name videox
 
 # Save PM2 configuration
 pm2 save
 
-# Auto-start on boot
+# Set up PM2 to start on boot
 pm2 startup
 ```
 
-## Usage
+## API Endpoints
 
-### Adding a Camera
+### Authentication
+- `POST /api/auth/login` - Login with credentials
+- `POST /api/auth/logout` - Logout
+- `POST /api/auth/refresh` - Refresh access token
 
-1. Navigate to **Cameras** page
-2. Click **Add Camera** button
-3. Fill in camera details:
-   - **Name**: Human-readable name (e.g., "Front Entrance")
-   - **Address**: IP address or hostname (e.g., `front.internal` or `192.168.1.100`)
-   - **Port**: HTTP port for VAPIX API (default: 80)
-   - **Username**: Camera username
-   - **Password**: Camera password
-4. Click **Test Connection** to verify
-5. Click **Add Camera**
+### Cameras
+- `GET /api/cameras` - List all cameras
+- `POST /api/cameras` - Add a new camera
+- `PUT /api/cameras/:serial` - Update camera settings
+- `DELETE /api/cameras/:serial` - Remove a camera
+- `POST /api/cameras/resolutions` - Get supported resolutions from camera
 
-The system will:
-- Connect to camera via VAPIX API
-- Retrieve serial number, model, firmware
-- Detect capabilities (PTZ, audio, stream profiles)
-- Encrypt and store credentials
-- Add camera to database
+### Recordings
+- `GET /api/recordings` - List recordings with filters
+- `GET /api/recordings/:id` - Get recording details
+- `DELETE /api/recordings/:id` - Delete a recording
+- `GET /api/recordings/periods` - Get recording periods (for external integrations)
 
-### Starting Recording
+### Live Streaming
+- `POST /api/live/start/:cameraId` - Start HLS stream
+- `POST /api/live/stop/:cameraId` - Stop HLS stream
+- `GET /hls/:cameraId/playlist.m3u8` - HLS playlist
 
-1. Navigate to **Recordings** page
-2. Select camera from dropdown
-3. Click **Start Recording**
+### Storage
+- `GET /api/storage/stats` - Get storage statistics
+- `GET /api/storage/path` - Get current storage path
+- `POST /api/storage/integrity/check` - Check storage integrity
+- `POST /api/storage/integrity/import-orphans` - Import orphaned files
+- `POST /api/storage/integrity/remove-orphans` - Remove orphaned files
+- `DELETE /api/storage/flush` - Flush all recordings
 
-The system will:
-- Spawn FFmpeg process to capture RTSP stream
-- Create 60-second MP4 segments
-- Organize files: `/{cameraId}/{YYYY}/{MM}/{DD}/{HH}/segment_{timestamp}.mp4`
-- Create metadata entries in MongoDB
-- Calculate retention dates
+### Export
+- `GET /api/export` - Export/stream recording segments
 
-### Viewing Live Stream
+### System
+- `GET /api/system/health` - Health check endpoint
 
-1. Navigate to **Live View** page
-2. Select camera for each position (2x2 grid)
-3. Stream will automatically start
+## CORS Configuration
 
-The system will:
-- Start FFmpeg HLS transcoder
-- Generate 2-second TS segments
-- Serve via `/hls/{cameraId}/playlist.m3u8`
-- Auto-stop when you navigate away
+By default, the server allows all origins. To restrict CORS for security:
 
-### Browsing Recordings
+Edit `.env`:
+```bash
+CORS_ORIGIN=http://your-client-domain.com:5173
+```
 
-1. Navigate to **Recordings** page
-2. Select camera and date range
-3. Click **Play** icon to view recording
-4. Click **Protect** to prevent auto-deletion
-5. Click **Delete** (admin only) to remove recording
+Or in production with multiple clients:
+```bash
+CORS_ORIGIN=http://client1.com,http://client2.com
+```
 
-### Managing Storage
+## Security Considerations
 
-1. Navigate to **Storage** page
-2. View total disk usage and per-camera breakdown
-3. Adjust retention days in **Camera Settings**
+1. **Change Default Credentials**: Update `ADMIN_USERNAME` and `ADMIN_PASSWORD` in `.env`
+2. **Secure JWT Secret**: Use a strong, random 32+ character `JWT_SECRET`
+3. **Secure Encryption Key**: Use a random 32-character `ENCRYPTION_KEY`
+4. **Enable HTTPS**: Use a reverse proxy (nginx/Apache) with SSL certificates
+5. **Firewall**: Restrict access to port 3002 (or your configured port)
+6. **Camera Credentials**: Camera passwords are encrypted using AES-256
 
-Automatic cleanup runs hourly:
-- Deletes recordings older than retention date
-- Skips protected recordings
-- Removes both database entries and files
+## Monitoring and Logs
 
-## API Documentation
+Logs are written to the path specified in `LOG_PATH` environment variable.
 
-See [API.md](./API.md) for complete API documentation.
+View logs with PM2:
+```bash
+pm2 logs videox
+```
 
-**Base URL**: `http://localhost:3002/api`
-
-**Authentication**: All endpoints require `Authorization: Bearer <token>` except:
-- `POST /auth/login`
-- `GET /system/health`
-
-**Key Endpoints**:
-- `POST /auth/login` - Authenticate
-- `GET /cameras` - List cameras
-- `POST /cameras` - Add camera
-- `GET /recordings` - List recordings
-- `POST /recordings/:cameraId/start` - Start recording
-- `GET /live/:serial/start` - Start live stream
-
-## Architecture
-
-See [ARCHITECTURE.md](./ARCHITECTURE.md) for detailed system architecture.
-
-**High-Level Architecture**:
-- **Frontend**: React SPA with Video.js for playback
-- **Backend**: Express API server with JWT auth
-- **Recording**: FFmpeg processes (one per camera) creating 60s MP4 segments
-- **Live Streaming**: FFmpeg HLS transcoders (on-demand)
-- **Storage**: Local filesystem with date-based hierarchy
-- **Metadata**: MongoDB for cameras, recordings, users
-- **Events**: InfluxDB for time-series data (future)
-
-## Security
-
-### Network Security
-- **Local Network Only**: Do NOT expose to internet
-- **Firewall**: Restrict to local subnet only
-- **HTTPS**: Use reverse proxy with SSL/TLS (recommended)
-
-### Application Security
-- **Camera Credentials**: Encrypted with AES-256-CBC
-- **User Passwords**: Hashed with bcrypt (cost factor 10)
-- **JWT Tokens**: 15-minute access tokens, 7-day refresh tokens
-- **Rate Limiting**: 100 requests/minute per IP
-- **Role-Based Access**: Admin, Operator, Viewer roles
-- **Audit Logging**: All actions logged to database
-
-### Role Permissions
-
-| Action | Viewer | Operator | Admin |
-|--------|--------|----------|-------|
-| View Live Streams | ✓ | ✓ | ✓ |
-| View Recordings | ✓ | ✓ | ✓ |
-| Add Cameras | ✗ | ✓ | ✓ |
-| Edit Cameras | ✗ | ✓ | ✓ |
-| Delete Cameras | ✗ | ✗ | ✓ |
-| Start/Stop Recording | ✗ | ✓ | ✓ |
-| Protect Recordings | ✗ | ✓ | ✓ |
-| Delete Recordings | ✗ | ✗ | ✓ |
-| Manage Users | ✗ | ✗ | ✓ |
+View logs directly:
+```bash
+tail -f /var/log/videox/combined.log
+```
 
 ## Troubleshooting
 
-### Backend Won't Start
+### MongoDB Connection Issues
+- Verify MongoDB is running: `sudo systemctl status mongodb`
+- Check connection string in `.env`
+- Ensure MongoDB user has correct permissions
 
-**Error**: `EADDRINUSE: address already in use`
-```bash
-# Find process using port 3002
-lsof -ti:3002
+### FFmpeg Not Found
+- Install FFmpeg: `sudo apt install ffmpeg`
+- Verify installation: `ffmpeg -version`
 
-# Kill the process
-kill $(lsof -ti:3002)
-```
-
-**Error**: `MongoDB connection failed`
-```bash
-# Check MongoDB status
-sudo systemctl status mongod
-
-# Start MongoDB
-sudo systemctl start mongod
-```
-
-### Camera Connection Failed
-
-**Error**: `Failed to connect to camera: HTTP 401`
-- Verify username/password are correct
-- Check camera is accessible: `ping front.internal`
-- Verify camera is Axis brand (VAPIX API required)
-
-**Error**: `Failed to connect to camera: Connection timeout`
-- Check camera IP address/hostname
-- Verify camera is on same network
-- Check firewall rules
+### Storage Permissions
+- Ensure storage directory exists and is writable
+- Check permissions: `ls -la /var/lib/videox-storage`
 
 ### Recording Not Starting
+- Check camera connectivity
+- Verify VAPIX credentials
+- Check FFmpeg logs in application logs
 
-**Error**: `FFmpeg process exited with code 1`
-```bash
-# Check FFmpeg is installed
-ffmpeg -version
+## Development
 
-# Check H.264 codec support
-ffmpeg -codecs | grep h264
-
-# Check RTSP stream manually
-ffmpeg -rtsp_transport tcp -i rtsp://user:pass@camera:554/axis-media/media.amp -t 10 test.mp4
+### Project Structure
+```
+videox/
+├── src/
+│   ├── config/         # Database and configuration
+│   ├── middleware/     # Express middleware
+│   ├── models/         # MongoDB schemas
+│   ├── routes/         # API routes
+│   ├── services/       # Business logic
+│   │   ├── camera/     # VAPIX service
+│   │   ├── event/      # Event logging
+│   │   ├── recording/  # Recording manager
+│   │   ├── retention/  # Retention manager
+│   │   └── stream/     # HLS stream manager
+│   ├── utils/          # Utilities
+│   └── server.js       # Entry point
+├── .env                # Environment variables
+├── .env.example        # Example environment file
+├── package.json        # Dependencies
+└── README.md           # This file
 ```
 
-**Error**: `Failed to open segment: No such file or directory`
+### Running Tests
 ```bash
-# Verify storage path exists
-ls -la /home/fred/videox-storage
-
-# Check permissions
-chmod 750 /home/fred/videox-storage
+npm test
 ```
-
-### Live Stream Not Loading
-
-**Error**: Spinner keeps loading, no video
-```bash
-# Check backend logs for FFmpeg errors
-tail -f /var/log/videox/videox-api.log
-
-# Verify HLS files are being created
-ls -la /home/fred/videox-storage/hls/{cameraId}/
-
-# Check playlist exists
-cat /home/fred/videox-storage/hls/{cameraId}/playlist.m3u8
-```
-
-**Error**: `ERR_CONNECTION_REFUSED` for HLS files
-- Restart frontend dev server (Vite proxy issue)
-- Verify `/hls` proxy is configured in `vite.config.js`
-
-## Development Status
-
-### ✅ Phase 1 - Complete (2025-12-25)
-- Project scaffolding and structure
-- Database connections (MongoDB, InfluxDB)
-- Authentication system (JWT, bcrypt)
-- User management
-- Frontend layout and navigation
-
-### ✅ Phase 2 - Complete (2025-12-25)
-- Camera management with VAPIX integration
-- HTTP Digest authentication for Axis cameras
-- Continuous recording engine (60s MP4 segments)
-- HLS live streaming
-- Recording playback
-- Retention management and cleanup
-- Storage statistics
-- Audit logging
-
-### 📋 Phase 3 - Planned
-- Event timeline and notifications
-- Motion detection integration
-- Advanced filtering and search
-- Video export and download
-- Multi-camera synchronization
-- Mobile-responsive improvements
-
-### 📋 Phase 4 - Future
-- PTZ camera control
-- Two-way audio
-- Mobile app (React Native)
-- Push notifications
-- AI analytics (people counting, object detection)
-- Multi-site management
-
-## Contributing
-
-This is a private project. Contributions are not currently accepted.
 
 ## License
 
-Private License - All Rights Reserved
+[Your License Here]
 
 ## Support
 
-For issues and questions, please refer to:
-- [Architecture Documentation](./ARCHITECTURE.md)
-- [API Documentation](./API.md)
-- [Complete Specification](./VideoX_Complete_Specification.md)
-
-## Acknowledgments
-
-- **Axis Communications** - VAPIX API documentation
-- **FFmpeg** - Video processing
-- **Video.js** - HTML5 video player
-- **Material-UI** - React component library
+For issues and questions, please open an issue on GitHub.

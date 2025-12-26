@@ -1,15 +1,13 @@
 const express = require('express');
 const router = express.Router();
-const bcrypt = require('bcrypt');
 const { body } = require('express-validator');
-const User = require('../models/User');
 const { generateAccessToken, generateRefreshToken, verifyToken } = require('../utils/jwt');
 const { validate } = require('../utils/validators');
 const logger = require('../utils/logger');
 
 /**
  * POST /api/auth/login
- * Login with username and password
+ * Login with username and password (single-user system using .env credentials)
  */
 router.post(
   '/login',
@@ -22,22 +20,11 @@ router.post(
     try {
       const { username, password } = req.body;
 
-      // Find user
-      const user = await User.findOne({ username: username.toLowerCase() });
+      // Verify credentials against .env
+      const adminUsername = process.env.ADMIN_USERNAME;
+      const adminPassword = process.env.ADMIN_PASSWORD;
 
-      if (!user || !user.active) {
-        return res.status(401).json({
-          error: {
-            code: 'AUTH_INVALID_CREDENTIALS',
-            message: 'Invalid username or password',
-          },
-        });
-      }
-
-      // Verify password
-      const isPasswordValid = await bcrypt.compare(password, user.password);
-
-      if (!isPasswordValid) {
+      if (username !== adminUsername || password !== adminPassword) {
         return res.status(401).json({
           error: {
             code: 'AUTH_INVALID_CREDENTIALS',
@@ -48,27 +35,23 @@ router.post(
 
       // Generate tokens
       const tokenPayload = {
-        id: user._id.toString(),
-        username: user.username,
-        role: user.role,
+        id: 'admin',
+        username: adminUsername,
+        role: 'admin',
       };
 
       const accessToken = generateAccessToken(tokenPayload);
-      const refreshToken = generateRefreshToken({ id: user._id.toString() });
+      const refreshToken = generateRefreshToken({ id: 'admin' });
 
-      // Update last login
-      user.lastLogin = new Date();
-      await user.save();
-
-      logger.info(`User ${username} logged in successfully`);
+      logger.info(`Admin user logged in successfully`);
 
       res.json({
         token: accessToken,
         refreshToken,
         user: {
-          id: user._id,
-          username: user.username,
-          role: user.role,
+          id: 'admin',
+          username: adminUsername,
+          role: 'admin',
         },
       });
     } catch (error) {
@@ -79,7 +62,7 @@ router.post(
 
 /**
  * POST /api/auth/refresh
- * Refresh access token using refresh token
+ * Refresh access token using refresh token (single-user system)
  */
 router.post('/refresh', async (req, res, next) => {
   try {
@@ -97,10 +80,7 @@ router.post('/refresh', async (req, res, next) => {
     // Verify refresh token
     const decoded = verifyToken(refreshToken);
 
-    // Find user
-    const user = await User.findById(decoded.id);
-
-    if (!user || !user.active) {
+    if (decoded.id !== 'admin') {
       return res.status(401).json({
         error: {
           code: 'AUTH_INVALID_TOKEN',
@@ -111,9 +91,9 @@ router.post('/refresh', async (req, res, next) => {
 
     // Generate new access token
     const tokenPayload = {
-      id: user._id.toString(),
-      username: user.username,
-      role: user.role,
+      id: 'admin',
+      username: process.env.ADMIN_USERNAME,
+      role: 'admin',
     };
 
     const accessToken = generateAccessToken(tokenPayload);

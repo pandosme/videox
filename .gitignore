@@ -1,48 +1,59 @@
 # Dependencies
 node_modules/
-package-lock.json
-yarn.lock
-pnpm-lock.yaml
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
 
 # Environment variables
 .env
 .env.local
 .env.*.local
+.env.test
 
 # Logs
 logs/
 *.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pino-debug.log*
-lerna-debug.log*
+/var/log/videox
+
+# Runtime data
+pids/
+*.pid
+*.seed
 
 # Build outputs
 dist/
-dist-ssr/
 build/
 *.local
 
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
-.idea
-.DS_Store
+.idea/
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
+*.swp
+*.swo
+*~
+.claude/
 
 # Test coverage
 coverage/
 *.lcov
-.nyc_output
+.nyc_output/
 
-# Recordings and storage
-/recordings/
+# Storage (recordings and HLS streams)
+# Note: Configure STORAGE_PATH in .env to point outside the repo
+storage/
+recordings/
+hls/
 /var/
+
+# PM2
+.pm2/
 
 # Temporary files
 *.tmp
@@ -52,6 +63,3 @@ coverage/
 # OS files
 Thumbs.db
 .DS_Store
-
-# Debug
-.vscode-test

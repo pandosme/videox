@@ -333,6 +333,76 @@ class VapixService {
   }
 
   /**
+   * Get supported resolutions from camera
+   * @param {string} address - Camera IP address
+   * @param {number} port - Camera HTTP port
+   * @param {string} username - Camera username
+   * @param {string} password - Camera password
+   * @returns {Promise<Array<string>>} - List of supported resolutions
+   */
+  async getSupportedResolutions(address, port = 80, username, password) {
+    try {
+      const cleanAddr = this.cleanAddress(address);
+      const protocol = this.getProtocol(address, port);
+      const url = `${protocol}://${cleanAddr}:${port}/axis-cgi/param.cgi?action=list&group=Properties.Image.Resolution`;
+
+      const data = await this.digestGet(url, username, password);
+
+      // Parse resolutions from response
+      const resolutions = [];
+      const lines = data.split('\n');
+
+      for (const line of lines) {
+        if (line.includes('root.Properties.Image.Resolution.')) {
+          // Extract resolution like "1920x1080"
+          const match = line.match(/=(.+)/);
+          if (match) {
+            const res = match[1].trim();
+            if (res && !resolutions.includes(res)) {
+              resolutions.push(res);
+            }
+          }
+        }
+      }
+
+      // If no resolutions found via Properties API, try ImageSource API
+      if (resolutions.length === 0) {
+        const altUrl = `${protocol}://${cleanAddr}:${port}/axis-cgi/param.cgi?action=list&group=ImageSource`;
+        const altData = await this.digestGet(altUrl, username, password);
+        const altLines = altData.split('\n');
+
+        for (const line of altLines) {
+          // Look for resolution patterns like 1920x1080
+          const match = line.match(/(\d{3,4}x\d{3,4})/);
+          if (match && !resolutions.includes(match[1])) {
+            resolutions.push(match[1]);
+          }
+        }
+      }
+
+      // If still no resolutions, return common defaults
+      if (resolutions.length === 0) {
+        logger.warn(`No resolutions found from ${cleanAddr}, using defaults`);
+        return ['1920x1080', '1280x720', '640x480'];
+      }
+
+      // Sort resolutions by pixel count (largest first)
+      resolutions.sort((a, b) => {
+        const [w1, h1] = a.split('x').map(Number);
+        const [w2, h2] = b.split('x').map(Number);
+        return (w2 * h2) - (w1 * h1);
+      });
+
+      logger.info(`Retrieved ${resolutions.length} supported resolutions from ${cleanAddr}`);
+      return resolutions;
+    } catch (error) {
+      logger.warn(`Failed to get resolutions from ${address}:`, error.message);
+      // Return common defaults
+      return ['1920x1080', '1280x720', '640x480'];
+    }
+  }
+
+  /**
    * Build RTSP URL for camera stream
    * @param {Object} camera - Camera object with settings
    * @returns {string} - RTSP URL

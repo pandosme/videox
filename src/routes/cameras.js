@@ -9,6 +9,7 @@ const AuditLog = require('../models/AuditLog');
 const vapixService = require('../services/camera/vapixService');
 const { encrypt, decrypt } = require('../utils/encryption');
 const logger = require('../utils/logger');
+const recordingManager = require('../services/recording/recordingManager');
 
 // All camera routes require authentication
 router.use(authenticate);
@@ -131,18 +132,22 @@ router.post(
       // Encrypt password
       const encryptedPassword = encrypt(credentials.password);
 
-      // Create camera document
+      // Create camera document with continuous recording enabled by default
       const camera = new Camera({
         _id: serial,
         name,
         address,
+        httpPort, // HTTP port for VAPIX API
         // port defaults to 554 (RTSP port) in the schema
         credentials: {
           username: credentials.username,
           password: encryptedPassword,
         },
         streamSettings: streamSettings || {},
-        recordingSettings: recordingSettings || {},
+        recordingSettings: {
+          mode: 'continuous', // Always start with continuous recording
+          ...(recordingSettings || {}),
+        },
         metadata: {
           model: testResult.model,
           firmware: testResult.firmware,
@@ -167,6 +172,15 @@ router.post(
       });
 
       logger.info(`Camera added successfully: ${serial}`);
+
+      // Auto-start recording for the new camera
+      try {
+        await recordingManager.startRecording(camera);
+        logger.info(`Recording auto-started for camera: ${serial}`);
+      } catch (recordingError) {
+        logger.error(`Failed to auto-start recording for camera ${serial}:`, recordingError);
+        // Don't fail the camera addition if recording fails
+      }
 
       const result = camera.toObject();
       delete result.credentials.password;
@@ -198,6 +212,10 @@ router.put('/:serial', authorize(['admin', 'operator']), async (req, res, next) 
 
     const { name, streamSettings, recordingSettings, retentionDays, active, metadata } = req.body;
 
+    // Track if recording mode changed
+    const oldRecordingMode = camera.recordingSettings?.mode;
+    const newRecordingMode = recordingSettings?.mode;
+
     // Update fields if provided
     if (name) camera.name = name;
     if (streamSettings) camera.streamSettings = { ...camera.streamSettings, ...streamSettings };
@@ -218,6 +236,29 @@ router.put('/:serial', authorize(['admin', 'operator']), async (req, res, next) 
     await AuditLog.log(req.user.id, 'camera.update', req.params.serial, req.body);
 
     logger.info(`Camera updated: ${req.params.serial}`);
+
+    // Handle recording mode changes
+    if (newRecordingMode && newRecordingMode !== oldRecordingMode) {
+      const isCurrentlyRecording = recordingManager.isRecording(req.params.serial);
+
+      if (newRecordingMode === 'continuous' && !isCurrentlyRecording) {
+        // Start recording if mode changed to continuous
+        try {
+          await recordingManager.startRecording(camera);
+          logger.info(`Recording started for camera ${req.params.serial} after mode change`);
+        } catch (recordingError) {
+          logger.error(`Failed to start recording for camera ${req.params.serial}:`, recordingError);
+        }
+      } else if (newRecordingMode === 'disabled' && isCurrentlyRecording) {
+        // Stop recording if mode changed to disabled
+        try {
+          await recordingManager.stopRecording(req.params.serial);
+          logger.info(`Recording stopped for camera ${req.params.serial} after mode change`);
+        } catch (recordingError) {
+          logger.error(`Failed to stop recording for camera ${req.params.serial}:`, recordingError);
+        }
+      }
+    }
 
     const result = camera.toObject();
     delete result.credentials.password;
@@ -291,6 +332,36 @@ router.post('/test', authorize(['admin', 'operator']), async (req, res, next) =>
 });
 
 /**
+ * POST /api/cameras/resolutions
+ * Get supported resolutions from a camera
+ */
+router.post('/resolutions', authorize(['admin', 'operator']), async (req, res, next) => {
+  try {
+    const { address, port = 80, credentials } = req.body;
+
+    if (!address || !credentials?.username || !credentials?.password) {
+      return res.status(400).json({
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: 'Address, username, and password are required',
+        },
+      });
+    }
+
+    const resolutions = await vapixService.getSupportedResolutions(
+      address,
+      port,
+      credentials.username,
+      credentials.password
+    );
+
+    res.json({ resolutions });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
  * POST /api/cameras/:serial/snapshot
  * Capture snapshot from camera
  */
@@ -312,7 +383,7 @@ router.post('/:serial/snapshot', async (req, res, next) => {
 
     const snapshot = await vapixService.captureSnapshot(
       camera.address,
-      camera.port || 80,
+      camera.httpPort || 80,
       camera.credentials.username,
       password,
       camera.streamSettings.resolution

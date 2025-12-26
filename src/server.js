@@ -12,13 +12,11 @@ const { errorHandler, notFoundHandler } = require('./middleware/errorHandler/err
 // Validate required environment variables
 const requiredEnvVars = [
   'MONGODB_URI',
-  'INFLUXDB_URL',
-  'INFLUXDB_TOKEN',
-  'INFLUXDB_ORG',
-  'INFLUXDB_BUCKET',
   'STORAGE_PATH',
   'JWT_SECRET',
   'ENCRYPTION_KEY',
+  'ADMIN_USERNAME',
+  'ADMIN_PASSWORD',
 ];
 
 for (const envVar of requiredEnvVars) {
@@ -124,7 +122,6 @@ app.get('/api/system/health', async (req, res) => {
   res.status(statusCode).json({
     status,
     mongodb: dbHealth.mongodb,
-    influxdb: dbHealth.influxdb,
     diskSpace: storageInfo,
     uptime: process.uptime(),
   });
@@ -210,8 +207,8 @@ async function startup() {
   try {
     logger.info('VideoX starting up...');
 
-    // 1. Connect to databases
-    logger.info('Connecting to databases...');
+    // 1. Connect to database
+    logger.info('Connecting to database...');
 
     try {
       await databaseManager.connectMongoDB(5, 5000);
@@ -220,14 +217,7 @@ async function startup() {
       process.exit(2);
     }
 
-    try {
-      await databaseManager.connectInfluxDB(5, 5000);
-    } catch (error) {
-      logger.error('Failed to connect to InfluxDB');
-      process.exit(3);
-    }
-
-    logger.info('Databases connected successfully');
+    logger.info('Database connected successfully');
 
     // 1.5. Check for configured storage path
     await checkStoragePathConfig();

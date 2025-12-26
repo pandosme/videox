@@ -17,7 +17,13 @@ const cameraSchema = new mongoose.Schema(
     },
     port: {
       type: Number,
-      default: 554,
+      default: 554, // RTSP port
+      min: 1,
+      max: 65535,
+    },
+    httpPort: {
+      type: Number,
+      default: 80, // HTTP port for VAPIX API
       min: 1,
       max: 65535,
     },
