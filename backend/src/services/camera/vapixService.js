@@ -1,4 +1,5 @@
 const axios = require('axios');
+const https = require('https');
 const { DigestClient } = require('digest-fetch');
 const logger = require('../../utils/logger');
 
@@ -13,9 +14,39 @@ class VapixService {
    * @private
    */
   createDigestClient(username, password) {
+    // Create HTTPS agent that ignores self-signed certificates
+    const httpsAgent = new https.Agent({
+      rejectUnauthorized: false,
+    });
+
     return new DigestClient(username, password, {
       basic: false,
+      agent: httpsAgent,
     });
+  }
+
+  /**
+   * Determine protocol based on port or address
+   * @private
+   */
+  getProtocol(address, port) {
+    // If address starts with http:// or https://, extract it
+    if (address.startsWith('https://')) {
+      return 'https';
+    }
+    if (address.startsWith('http://')) {
+      return 'http';
+    }
+    // Otherwise, use port to determine (443 = https, else http)
+    return port === 443 ? 'https' : 'http';
+  }
+
+  /**
+   * Clean address (remove protocol if present)
+   * @private
+   */
+  cleanAddress(address) {
+    return address.replace(/^https?:\/\//, '');
   }
 
   /**
@@ -60,7 +91,9 @@ class VapixService {
    */
   async getSerialNumber(address, port = 80, username, password) {
     try {
-      const url = `http://${address}:${port}/axis-cgi/basicdeviceinfo.cgi`;
+      const cleanAddr = this.cleanAddress(address);
+      const protocol = this.getProtocol(address, port);
+      const url = `${protocol}://${cleanAddr}:${port}/axis-cgi/basicdeviceinfo.cgi`;
       const requestBody = {
         apiVersion: '1.0',
         method: 'getProperties',
@@ -73,7 +106,7 @@ class VapixService {
       const serial = response.data.propertyList.SerialNumber;
 
       if (serial) {
-        logger.info(`Retrieved serial number: ${serial} from ${address}`);
+        logger.info(`Retrieved serial number: ${serial} from ${cleanAddr}`);
         return serial;
       }
 
@@ -94,7 +127,9 @@ class VapixService {
    */
   async getDeviceInfo(address, port = 80, username, password) {
     try {
-      const url = `http://${address}:${port}/axis-cgi/basicdeviceinfo.cgi`;
+      const cleanAddr = this.cleanAddress(address);
+      const protocol = this.getProtocol(address, port);
+      const url = `${protocol}://${cleanAddr}:${port}/axis-cgi/basicdeviceinfo.cgi`;
       const requestBody = {
         apiVersion: '1.0',
         method: 'getProperties',
@@ -111,7 +146,7 @@ class VapixService {
         serial: response.data.propertyList.SerialNumber,
       };
 
-      logger.info(`Retrieved device info from ${address}:`, info);
+      logger.info(`Retrieved device info from ${cleanAddr}:`, info);
       return info;
     } catch (error) {
       logger.error(`Failed to get device info from ${address}:`, error.message);
@@ -129,7 +164,9 @@ class VapixService {
    */
   async getStreamProfiles(address, port = 80, username, password) {
     try {
-      const url = `http://${address}:${port}/axis-cgi/streamprofile.cgi?action=list`;
+      const cleanAddr = this.cleanAddress(address);
+      const protocol = this.getProtocol(address, port);
+      const url = `${protocol}://${cleanAddr}:${port}/axis-cgi/streamprofile.cgi?action=list`;
       const data = await this.digestGet(url, username, password);
 
       // Parse profiles from response
@@ -145,7 +182,7 @@ class VapixService {
         }
       }
 
-      logger.info(`Retrieved ${profiles.length} stream profiles from ${address}`);
+      logger.info(`Retrieved ${profiles.length} stream profiles from ${cleanAddr}`);
       return profiles;
     } catch (error) {
       logger.warn(`Failed to get stream profiles from ${address}:`, error.message);
@@ -162,15 +199,17 @@ class VapixService {
    * @param {string} password - Camera password
    * @returns {Promise<boolean>} - True if stream is accessible
    */
-  async testRTSPStream(address, rtspPort = 554, username, password) {
+  async testRTSPStream(address, port = 80, rtspPort = 554, username, password) {
     try {
       // For now, just verify HTTP connectivity
       // Full RTSP testing would require FFmpeg or RTSP client
-      const url = `http://${address}/axis-cgi/param.cgi?action=list&group=Properties.System`;
+      const cleanAddr = this.cleanAddress(address);
+      const protocol = this.getProtocol(address, port);
+      const url = `${protocol}://${cleanAddr}:${port}/axis-cgi/param.cgi?action=list&group=Properties.System`;
 
       await this.digestGet(url, username, password);
 
-      logger.info(`RTSP stream test passed for ${address}`);
+      logger.info(`RTSP stream test passed for ${cleanAddr}`);
       return true;
     } catch (error) {
       logger.error(`RTSP stream test failed for ${address}:`, error.message);
@@ -189,7 +228,9 @@ class VapixService {
    */
   async captureSnapshot(address, port = 80, username, password, resolution = null) {
     try {
-      let url = `http://${address}:${port}/axis-cgi/jpg/image.cgi`;
+      const cleanAddr = this.cleanAddress(address);
+      const protocol = this.getProtocol(address, port);
+      let url = `${protocol}://${cleanAddr}:${port}/axis-cgi/jpg/image.cgi`;
       if (resolution) {
         url += `?resolution=${resolution}`;
       }
@@ -202,7 +243,7 @@ class VapixService {
       }
 
       const arrayBuffer = await response.arrayBuffer();
-      logger.info(`Captured snapshot from ${address}`);
+      logger.info(`Captured snapshot from ${cleanAddr}`);
       return Buffer.from(arrayBuffer);
     } catch (error) {
       logger.error(`Failed to capture snapshot from ${address}:`, error.message);
@@ -220,7 +261,9 @@ class VapixService {
    */
   async getCapabilities(address, port = 80, username, password) {
     try {
-      const url = `http://${address}:${port}/axis-cgi/param.cgi?action=list&group=Properties`;
+      const cleanAddr = this.cleanAddress(address);
+      const protocol = this.getProtocol(address, port);
+      const url = `${protocol}://${cleanAddr}:${port}/axis-cgi/param.cgi?action=list&group=Properties`;
 
       const data = await this.digestGet(url, username, password);
 
@@ -230,7 +273,7 @@ class VapixService {
         profiles: await this.getStreamProfiles(address, port, username, password),
       };
 
-      logger.info(`Retrieved capabilities from ${address}:`, capabilities);
+      logger.info(`Retrieved capabilities from ${cleanAddr}:`, capabilities);
       return capabilities;
     } catch (error) {
       logger.error(`Failed to get capabilities from ${address}:`, error.message);
@@ -254,12 +297,13 @@ class VapixService {
    */
   async testConnection(address, port = 80, rtspPort = 554, username, password) {
     try {
-      logger.info(`Testing connection to camera at ${address}`);
+      const cleanAddr = this.cleanAddress(address);
+      logger.info(`Testing connection to camera at ${cleanAddr}`);
 
       // Test basic connectivity and get info
       const deviceInfo = await this.getDeviceInfo(address, port, username, password);
       const capabilities = await this.getCapabilities(address, port, username, password);
-      const rtspOk = await this.testRTSPStream(address, rtspPort, username, password);
+      const rtspOk = await this.testRTSPStream(address, port, rtspPort, username, password);
 
       return {
         connected: true,
