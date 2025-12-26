@@ -34,10 +34,17 @@ const PORT = process.env.API_PORT || 3000;
 
 // Middleware
 app.use(helmet()); // Security headers
+
+// CORS configuration for API service integration
 app.use(cors({
-  origin: process.env.NODE_ENV === 'production' ? false : '*', // Configure for local network only in production
+  origin: process.env.CORS_ORIGIN || '*', // Allow all origins by default (configurable via env)
   credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Range'],
+  exposedHeaders: ['Content-Range', 'Accept-Ranges', 'Content-Length'],
+  maxAge: 86400, // Cache preflight requests for 24 hours
 }));
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
