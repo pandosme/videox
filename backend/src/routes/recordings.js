@@ -3,19 +3,21 @@ const router = express.Router();
 const path = require('path');
 const fs = require('fs');
 const authenticate = require('../middleware/auth/authenticate');
+const apiAuth = require('../middleware/auth/apiAuth');
 const authorize = require('../middleware/auth/authorize');
 const Recording = require('../models/Recording');
 const Camera = require('../models/Camera');
 const recordingManager = require('../services/recording/recordingManager');
 const logger = require('../utils/logger');
 
-// All recording routes require authentication
-router.use(authenticate);
-
 /**
  * GET /api/recordings/periods
  * Get continuous recording periods (grouped segments)
  * Designed for integrators - returns consolidated blocks instead of individual 60s segments
+ *
+ * Supports authentication via:
+ * - Authorization header: Bearer <token> (JWT or API token)
+ * - Query parameter: ?token=<api_token> (API token only, for simple clients)
  *
  * Query parameters:
  * - cameraId: Filter by camera serial number (optional, returns all cameras if not specified)
@@ -23,8 +25,9 @@ router.use(authenticate);
  * - endDate: Filter periods ending before this date (ISO 8601 or epoch seconds)
  * - minDuration: Minimum period duration in seconds (optional)
  * - gapThreshold: Max gap in seconds to consider recordings continuous (default: 120)
+ * - token: API token for authentication (optional, alternative to Authorization header)
  */
-router.get('/periods', async (req, res, next) => {
+router.get('/periods', apiAuth, async (req, res, next) => {
   try {
     const {
       cameraId,
@@ -137,8 +140,12 @@ router.get('/periods', async (req, res, next) => {
 /**
  * GET /api/recordings
  * Get recordings with filtering and pagination
+ *
+ * Supports authentication via:
+ * - Authorization header: Bearer <token> (JWT or API token)
+ * - Query parameter: ?token=<api_token> (API token only, for simple clients)
  */
-router.get('/', async (req, res, next) => {
+router.get('/', apiAuth, async (req, res, next) => {
   try {
     const {
       cameraId,
@@ -198,8 +205,12 @@ router.get('/', async (req, res, next) => {
 /**
  * GET /api/recordings/:id
  * Get recording by ID
+ *
+ * Supports authentication via:
+ * - Authorization header: Bearer <token> (JWT or API token)
+ * - Query parameter: ?token=<api_token> (API token only, for simple clients)
  */
-router.get('/:id', async (req, res, next) => {
+router.get('/:id', apiAuth, async (req, res, next) => {
   try {
     const recording = await Recording.findById(req.params.id);
 
@@ -222,8 +233,12 @@ router.get('/:id', async (req, res, next) => {
 /**
  * GET /api/recordings/:id/stream
  * Stream recording video file
+ *
+ * Supports authentication via:
+ * - Authorization header: Bearer <token> (JWT or API token)
+ * - Query parameter: ?token=<api_token> (API token only, for simple clients)
  */
-router.get('/:id/stream', async (req, res, next) => {
+router.get('/:id/stream', apiAuth, async (req, res, next) => {
   try {
     const recording = await Recording.findById(req.params.id);
 
@@ -285,7 +300,7 @@ router.get('/:id/stream', async (req, res, next) => {
  * POST /api/recordings/:cameraId/start
  * Start recording for a camera (Admin or Operator only)
  */
-router.post('/:cameraId/start', authorize(['admin', 'operator']), async (req, res, next) => {
+router.post('/:cameraId/start', authenticate, authorize(['admin', 'operator']), async (req, res, next) => {
   try {
     const camera = await Camera.findById(req.params.cameraId);
 
@@ -326,7 +341,7 @@ router.post('/:cameraId/start', authorize(['admin', 'operator']), async (req, re
  * POST /api/recordings/:cameraId/stop
  * Stop recording for a camera (Admin or Operator only)
  */
-router.post('/:cameraId/stop', authorize(['admin', 'operator']), async (req, res, next) => {
+router.post('/:cameraId/stop', authenticate, authorize(['admin', 'operator']), async (req, res, next) => {
   try {
     await recordingManager.stopRecording(req.params.cameraId);
 
@@ -346,8 +361,12 @@ router.post('/:cameraId/stop', authorize(['admin', 'operator']), async (req, res
 /**
  * GET /api/recordings/:cameraId/status
  * Get recording status for a camera
+ *
+ * Supports authentication via:
+ * - Authorization header: Bearer <token> (JWT or API token)
+ * - Query parameter: ?token=<api_token> (API token only, for simple clients)
  */
-router.get('/:cameraId/status', async (req, res, next) => {
+router.get('/:cameraId/status', apiAuth, async (req, res, next) => {
   try {
     // Check both in-memory state and database state
     const isRecording = recordingManager.isRecording(req.params.cameraId);
@@ -371,8 +390,12 @@ router.get('/:cameraId/status', async (req, res, next) => {
 /**
  * GET /api/recordings/active/list
  * Get all active recordings
+ *
+ * Supports authentication via:
+ * - Authorization header: Bearer <token> (JWT or API token)
+ * - Query parameter: ?token=<api_token> (API token only, for simple clients)
  */
-router.get('/active/list', async (req, res, next) => {
+router.get('/active/list', apiAuth, async (req, res, next) => {
   try {
     const activeRecordings = recordingManager.getAllRecordings();
     res.json(activeRecordings);
@@ -386,7 +409,7 @@ router.get('/active/list', async (req, res, next) => {
  * PUT /api/recordings/:id/protect
  * Mark recording as protected (prevents deletion by retention policy)
  */
-router.put('/:id/protect', authorize(['admin', 'operator']), async (req, res, next) => {
+router.put('/:id/protect', authenticate, authorize(['admin', 'operator']), async (req, res, next) => {
   try {
     const recording = await Recording.findByIdAndUpdate(
       req.params.id,
@@ -416,7 +439,7 @@ router.put('/:id/protect', authorize(['admin', 'operator']), async (req, res, ne
  * PUT /api/recordings/:id/unprotect
  * Remove protected flag from recording
  */
-router.put('/:id/unprotect', authorize(['admin', 'operator']), async (req, res, next) => {
+router.put('/:id/unprotect', authenticate, authorize(['admin', 'operator']), async (req, res, next) => {
   try {
     const recording = await Recording.findByIdAndUpdate(
       req.params.id,
@@ -446,7 +469,7 @@ router.put('/:id/unprotect', authorize(['admin', 'operator']), async (req, res, 
  * DELETE /api/recordings/:id
  * Delete a recording (Admin only)
  */
-router.delete('/:id', authorize(['admin']), async (req, res, next) => {
+router.delete('/:id', authenticate, authorize(['admin']), async (req, res, next) => {
   try {
     const recording = await Recording.findById(req.params.id);
 

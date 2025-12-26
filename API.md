@@ -591,6 +591,10 @@ Get recordings with filtering and pagination.
 
 This endpoint is designed for external integrations and clients. Instead of returning individual 60-second segments, it groups consecutive recordings into continuous periods/blocks, making it easier to discover available footage.
 
+**Authentication Methods**
+1. Authorization header: `Authorization: Bearer <token>` (JWT or API token)
+2. Query parameter: `?token=<api_token>` (API token only, for simple clients)
+
 **Query Parameters**
 - `cameraId` (optional): Filter by camera serial number (returns all cameras if not specified)
 - `startDate` (optional): Filter periods starting after this date (ISO 8601 or epoch seconds)
@@ -659,7 +663,7 @@ GET /api/recordings/periods?cameraId=B8A44F3024BB&startDate=1735146000&endDate=1
 GET /api/recordings/periods?cameraId=B8A44F3024BB&minDuration=3600
 ```
 
-**Example - Use with export API**
+**Example - Use with export API (Authorization Header)**
 ```bash
 # 1. Get available recording periods
 curl -H "Authorization: Bearer <token>" \
@@ -668,6 +672,16 @@ curl -H "Authorization: Bearer <token>" \
 # 2. Use startTimeEpoch and durationSeconds from response to export
 curl -H "Authorization: Bearer <token>" \
   "http://localhost:3002/api/export?cameraId=B8A44F3024BB&startTime=1735146000&duration=5400" \
+  -o recording.mp4
+```
+
+**Example - Simple Integration (Query Parameter)**
+```bash
+# 1. Get available recording periods (simple URL, works in browsers/VLC)
+curl "http://localhost:3002/api/recordings/periods?cameraId=B8A44F3024BB&token=<api_token>"
+
+# 2. Export using the discovered period
+curl "http://localhost:3002/api/export?cameraId=B8A44F3024BB&startTime=1735146000&duration=5400&token=<api_token>" \
   -o recording.mp4
 ```
 
