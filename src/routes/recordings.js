@@ -342,22 +342,42 @@ router.get('/export-clip', apiAuth, async (req, res, next) => {
 
         // Use FFmpeg to trim the segment
         const { spawn } = require('child_process');
-        const ffmpeg = spawn('ffmpeg', [
-          '-i', segment.filePath,
+
+        // Put -ss before -i for input seeking (more reliable with low bitrate Zipstream)
+        const ffmpegArgs = [
           '-ss', trimStart.toString(),
           '-t', durationSec.toString(),
+          '-i', segment.filePath,
           '-c', 'copy',
           '-avoid_negative_ts', 'make_zero',
           '-y',
           outputPath,
-        ]);
+        ];
+
+        logger.info(`FFmpeg command: ffmpeg ${ffmpegArgs.join(' ')}`);
+
+        const ffmpeg = spawn('ffmpeg', ffmpegArgs);
+
+        let ffmpegStderr = '';
+        ffmpeg.stderr.on('data', (data) => {
+          ffmpegStderr += data.toString();
+        });
 
         await new Promise((resolve, reject) => {
           ffmpeg.on('exit', (code) => {
-            if (code === 0) resolve();
-            else reject(new Error(`FFmpeg exited with code ${code}`));
+            if (code === 0) {
+              logger.info(`FFmpeg completed successfully. Output: ${outputPath}`);
+              logger.info(`FFmpeg stderr: ${ffmpegStderr}`);
+              resolve();
+            } else {
+              logger.error(`FFmpeg failed with code ${code}. stderr: ${ffmpegStderr}`);
+              reject(new Error(`FFmpeg exited with code ${code}`));
+            }
           });
-          ffmpeg.on('error', reject);
+          ffmpeg.on('error', (err) => {
+            logger.error(`FFmpeg spawn error: ${err.message}`);
+            reject(err);
+          });
         });
 
         // Stream the output file
@@ -390,32 +410,44 @@ router.get('/export-clip', apiAuth, async (req, res, next) => {
 
     // Use FFmpeg to concatenate and trim
     const { spawn } = require('child_process');
-    const ffmpeg = spawn('ffmpeg', [
+
+    // Put -ss before -i for input seeking (more reliable with low bitrate Zipstream)
+    const ffmpegArgs = [
+      '-ss', trimStart.toString(),
+      '-t', durationSec.toString(),
       '-f', 'concat',
       '-safe', '0',
       '-i', concatListPath,
-      '-ss', trimStart.toString(),
-      '-t', durationSec.toString(),
       '-c', 'copy',
       '-avoid_negative_ts', 'make_zero',
       '-y',
       outputPath,
-    ]);
+    ];
 
-    let ffmpegError = '';
+    logger.info(`FFmpeg concat command: ffmpeg ${ffmpegArgs.join(' ')}`);
+
+    const ffmpeg = spawn('ffmpeg', ffmpegArgs);
+
+    let ffmpegStderr = '';
     ffmpeg.stderr.on('data', (data) => {
-      ffmpegError += data.toString();
+      ffmpegStderr += data.toString();
     });
 
     await new Promise((resolve, reject) => {
       ffmpeg.on('exit', (code) => {
-        if (code === 0) resolve();
-        else {
-          logger.error(`FFmpeg concat failed: ${ffmpegError}`);
+        if (code === 0) {
+          logger.info(`FFmpeg concat completed successfully. Output: ${outputPath}`);
+          logger.info(`FFmpeg concat stderr: ${ffmpegStderr}`);
+          resolve();
+        } else {
+          logger.error(`FFmpeg concat failed with code ${code}. stderr: ${ffmpegStderr}`);
           reject(new Error(`FFmpeg exited with code ${code}`));
         }
       });
-      ffmpeg.on('error', reject);
+      ffmpeg.on('error', (err) => {
+        logger.error(`FFmpeg concat spawn error: ${err.message}`);
+        reject(err);
+      });
     });
 
     // Clean up concat list
