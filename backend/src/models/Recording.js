@@ -15,11 +15,11 @@ const recordingSchema = new mongoose.Schema(
     filename: {
       type: String,
       required: true,
-      unique: true,
     },
     filePath: {
       type: String,
       required: true,
+      unique: true, // Full path is unique
     },
     startTime: {
       type: Date,

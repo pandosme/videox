@@ -111,10 +111,28 @@ router.get('/stats', async (req, res, next) => {
       const cameraOldest = await Recording.findOne({ cameraId: camera._id }).sort({ startTime: 1 });
       const cameraNewest = await Recording.findOne({ cameraId: camera._id }).sort({ startTime: -1 });
 
+      // Calculate continuous segments (periods)
+      const gapThreshold = 120 * 1000; // 2 minutes in milliseconds
+      const cameraRecordings = await Recording.find({
+        cameraId: camera._id,
+        status: 'completed'
+      }).sort({ startTime: 1 }).lean();
+
+      let continuousSegments = 0;
+      let lastEndTime = null;
+
+      for (const recording of cameraRecordings) {
+        if (!lastEndTime || (new Date(recording.startTime) - lastEndTime) > gapThreshold) {
+          continuousSegments++;
+        }
+        lastEndTime = new Date(recording.endTime);
+      }
+
       perCamera.push({
         cameraId: camera._id,
         cameraName: camera.name,
         recordingCount: cameraRecordingCount,
+        continuousSegments: continuousSegments,
         sizeGB: parseFloat(cameraSizeGB),
         oldestRecording: cameraOldest ? cameraOldest.startTime : null,
         newestRecording: cameraNewest ? cameraNewest.startTime : null,
@@ -218,6 +236,361 @@ router.post('/path', authorize(['admin']), async (req, res, next) => {
     });
   } catch (error) {
     logger.error('Error updating storage path:', error);
+    next(error);
+  }
+});
+
+/**
+ * GET /api/storage/integrity
+ * Check integrity of recordings - verify database vs filesystem
+ */
+router.get('/integrity', authorize(['admin', 'operator']), async (req, res, next) => {
+  try {
+    const storagePath = process.env.STORAGE_PATH;
+    const recordingsPath = path.join(storagePath, 'recordings');
+
+    const issues = [];
+    let dbRecordingsChecked = 0;
+    let missingFiles = 0;
+    let orphanedFiles = 0;
+
+    // Check database recordings against filesystem
+    const dbRecordings = await Recording.find();
+    dbRecordingsChecked = dbRecordings.length;
+
+    for (const recording of dbRecordings) {
+      try {
+        await fs.access(recording.filePath, fs.constants.F_OK);
+      } catch {
+        missingFiles++;
+        issues.push({
+          type: 'MISSING_FILE',
+          severity: 'error',
+          recordingId: recording._id,
+          cameraId: recording.cameraId,
+          filePath: recording.filePath,
+          startTime: recording.startTime,
+          message: `Database record exists but file is missing: ${recording.filePath}`,
+        });
+      }
+    }
+
+    // Check for orphaned files (files without database records)
+    const cameras = await Camera.find();
+    for (const camera of cameras) {
+      const cameraDir = path.join(recordingsPath, camera._id);
+
+      try {
+        const files = await fs.readdir(cameraDir, { recursive: true });
+
+        for (const file of files) {
+          if (file.endsWith('.mp4')) {
+            const fullPath = path.join(cameraDir, file);
+            const dbRecord = dbRecordings.find(r => r.filePath === fullPath);
+
+            if (!dbRecord) {
+              orphanedFiles++;
+              issues.push({
+                type: 'ORPHANED_FILE',
+                severity: 'warning',
+                filePath: fullPath,
+                cameraId: camera._id,
+                message: `File exists without database record: ${fullPath}`,
+              });
+            }
+          }
+        }
+      } catch (error) {
+        // Camera directory might not exist
+        logger.debug(`Cannot read camera directory ${cameraDir}:`, error.message);
+      }
+    }
+
+    // Check for recordings with incorrect status
+    const stuckRecordings = await Recording.find({
+      status: 'recording',
+      updatedAt: { $lt: new Date(Date.now() - 5 * 60 * 1000) }, // Still "recording" after 5 minutes
+    });
+
+    for (const recording of stuckRecordings) {
+      issues.push({
+        type: 'STUCK_STATUS',
+        severity: 'warning',
+        recordingId: recording._id,
+        cameraId: recording.cameraId,
+        message: `Recording stuck in 'recording' status for ${Math.round((Date.now() - recording.updatedAt) / 60000)} minutes`,
+      });
+    }
+
+    const summary = {
+      healthy: issues.length === 0,
+      dbRecordingsChecked,
+      missingFiles,
+      orphanedFiles,
+      stuckRecordings: stuckRecordings.length,
+      totalIssues: issues.length,
+    };
+
+    res.json({
+      summary,
+      issues,
+    });
+  } catch (error) {
+    logger.error('Error checking integrity:', error);
+    next(error);
+  }
+});
+
+/**
+ * POST /api/storage/integrity/import-orphaned
+ * Import orphaned files into database
+ * Admin only
+ */
+router.post('/integrity/import-orphaned', authorize(['admin']), async (req, res, next) => {
+  try {
+    const storagePath = process.env.STORAGE_PATH;
+    const recordingsPath = path.join(storagePath, 'recordings');
+
+    let importedCount = 0;
+    let failedCount = 0;
+    const errors = [];
+
+    // Get all cameras
+    const cameras = await Camera.find();
+
+    // Get existing database recordings for comparison
+    const dbRecordings = await Recording.find();
+    const existingPaths = new Set(dbRecordings.map(r => r.filePath));
+
+    for (const camera of cameras) {
+      const cameraDir = path.join(recordingsPath, camera._id);
+
+      try {
+        const files = await fs.readdir(cameraDir, { recursive: true });
+
+        for (const file of files) {
+          if (file.endsWith('.mp4')) {
+            const fullPath = path.join(cameraDir, file);
+
+            // Skip if already in database
+            if (existingPaths.has(fullPath)) {
+              continue;
+            }
+
+            try {
+              // Get file stats
+              const stats = await fs.stat(fullPath);
+
+              // Parse filename to extract timestamp
+              // New format: {SERIAL}_segment_YYYYMMDD_HHMMSS.mp4
+              // Old format: segment_YYYYMMDD_HHMMSS.mp4
+              const filename = path.basename(file);
+              let match = filename.match(/(?:[A-Z0-9]+_)?segment_(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})\.mp4/);
+
+              if (!match) {
+                errors.push(`Invalid filename format: ${filename}`);
+                failedCount++;
+                continue;
+              }
+
+              const [, year, month, day, hour, minute, second] = match;
+              const startTime = new Date(
+                parseInt(year),
+                parseInt(month) - 1,
+                parseInt(day),
+                parseInt(hour),
+                parseInt(minute),
+                parseInt(second)
+              );
+
+              // Calculate end time (60 seconds after start)
+              const endTime = new Date(startTime.getTime() + 60000);
+
+              // Create recording document
+              const recording = new Recording({
+                cameraId: camera._id,
+                filename,
+                filePath: fullPath,
+                startTime,
+                endTime,
+                duration: 60,
+                size: stats.size,
+                status: 'completed',
+                metadata: {
+                  resolution: camera.streamSettings?.resolution || camera.recordingSettings?.resolution,
+                  codec: 'h264',
+                  bitrate: camera.recordingSettings?.bitrate,
+                  fps: camera.recordingSettings?.fps,
+                },
+              });
+
+              // Calculate retention date
+              recording.calculateRetentionDate(camera.retentionDays || 30);
+
+              await recording.save();
+              importedCount++;
+
+              if (importedCount % 100 === 0) {
+                logger.info(`Imported ${importedCount} recordings so far...`);
+              }
+            } catch (error) {
+              errors.push(`Failed to import ${file}: ${error.message}`);
+              failedCount++;
+            }
+          }
+        }
+      } catch (error) {
+        logger.error(`Error reading camera directory ${cameraDir}:`, error);
+      }
+    }
+
+    logger.info(`Import completed: ${importedCount} imported, ${failedCount} failed`);
+
+    res.json({
+      success: true,
+      importedCount,
+      failedCount,
+      errors: errors.slice(0, 10), // Return first 10 errors
+      message: `Successfully imported ${importedCount} recordings into database`,
+    });
+  } catch (error) {
+    logger.error('Error importing orphaned files:', error);
+    next(error);
+  }
+});
+
+/**
+ * DELETE /api/storage/integrity/remove-orphaned
+ * Remove orphaned files from filesystem
+ * Admin only
+ */
+router.delete('/integrity/remove-orphaned', authorize(['admin']), async (req, res, next) => {
+  try {
+    const storagePath = process.env.STORAGE_PATH;
+    const recordingsPath = path.join(storagePath, 'recordings');
+
+    let deletedCount = 0;
+    let failedCount = 0;
+    const errors = [];
+
+    // Get all database recordings
+    const dbRecordings = await Recording.find();
+    const dbPaths = new Set(dbRecordings.map(r => r.filePath));
+
+    // Get all cameras
+    const cameras = await Camera.find();
+
+    for (const camera of cameras) {
+      const cameraDir = path.join(recordingsPath, camera._id);
+
+      try {
+        const files = await fs.readdir(cameraDir, { recursive: true });
+
+        for (const file of files) {
+          if (file.endsWith('.mp4')) {
+            const fullPath = path.join(cameraDir, file);
+
+            // Check if orphaned (not in database)
+            if (!dbPaths.has(fullPath)) {
+              try {
+                await fs.unlink(fullPath);
+                deletedCount++;
+
+                if (deletedCount % 100 === 0) {
+                  logger.info(`Deleted ${deletedCount} orphaned files so far...`);
+                }
+              } catch (error) {
+                errors.push(`Failed to delete ${file}: ${error.message}`);
+                failedCount++;
+              }
+            }
+          }
+        }
+      } catch (error) {
+        logger.error(`Error reading camera directory ${cameraDir}:`, error);
+      }
+    }
+
+    logger.info(`Cleanup completed: ${deletedCount} deleted, ${failedCount} failed`);
+
+    res.json({
+      success: true,
+      deletedCount,
+      failedCount,
+      errors: errors.slice(0, 10),
+      message: `Successfully deleted ${deletedCount} orphaned files`,
+    });
+  } catch (error) {
+    logger.error('Error removing orphaned files:', error);
+    next(error);
+  }
+});
+
+/**
+ * DELETE /api/storage/flush-all
+ * Flush all recordings - delete all database records and files
+ * Admin only - DESTRUCTIVE OPERATION
+ */
+router.delete('/flush-all', authorize(['admin']), async (req, res, next) => {
+  try {
+    const storagePath = process.env.STORAGE_PATH;
+    const recordingsPath = path.join(storagePath, 'recordings');
+
+    let deletedFiles = 0;
+    let deletedDbRecords = 0;
+    const errors = [];
+
+    logger.warn('FLUSH ALL RECORDINGS initiated by admin');
+
+    // Get all recordings from database
+    const allRecordings = await Recording.find();
+    deletedDbRecords = allRecordings.length;
+
+    // Delete all database records
+    await Recording.deleteMany({});
+    logger.info(`Deleted ${deletedDbRecords} recordings from database`);
+
+    // Delete all recording files from filesystem
+    const cameras = await Camera.find();
+
+    for (const camera of cameras) {
+      const cameraDir = path.join(recordingsPath, camera._id);
+
+      try {
+        // Read all files in camera directory recursively
+        const files = await fs.readdir(cameraDir, { recursive: true });
+
+        for (const file of files) {
+          if (file.endsWith('.mp4')) {
+            const fullPath = path.join(cameraDir, file);
+            try {
+              await fs.unlink(fullPath);
+              deletedFiles++;
+
+              if (deletedFiles % 100 === 0) {
+                logger.info(`Deleted ${deletedFiles} files so far...`);
+              }
+            } catch (error) {
+              errors.push(`Failed to delete ${file}: ${error.message}`);
+            }
+          }
+        }
+      } catch (error) {
+        logger.error(`Error reading camera directory ${cameraDir}:`, error);
+      }
+    }
+
+    logger.warn(`FLUSH COMPLETED: Deleted ${deletedDbRecords} DB records and ${deletedFiles} files`);
+
+    res.json({
+      success: true,
+      deletedDbRecords,
+      deletedFiles,
+      errors: errors.slice(0, 10),
+      message: `Successfully flushed all recordings: ${deletedDbRecords} database records and ${deletedFiles} files deleted`,
+    });
+  } catch (error) {
+    logger.error('Error flushing all recordings:', error);
     next(error);
   }
 });

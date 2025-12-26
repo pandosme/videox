@@ -117,7 +117,8 @@ class RecordingManager {
       await fs.mkdir(currentHourDir, { recursive: true });
 
       // Build FFmpeg command for segmented recording
-      const segmentPattern = path.join(cameraDir, '%Y', '%m', '%d', '%H', 'segment_%Y%m%d_%H%M%S.mp4');
+      // Include camera ID (serial number) in filename to ensure uniqueness across cameras
+      const segmentPattern = path.join(cameraDir, '%Y', '%m', '%d', '%H', `${camera._id}_segment_%Y%m%d_%H%M%S.mp4`);
 
       const ffmpegArgs = [
         '-rtsp_transport', 'tcp',
@@ -139,9 +140,11 @@ class RecordingManager {
 
       const ffmpegProcess = spawn('ffmpeg', ffmpegArgs);
 
-      // Track current segment file
+      // Track current and previous segment files
       let currentSegmentPath = null;
       let segmentStartTime = null;
+      let previousSegmentPath = null;
+      let previousSegmentStartTime = null;
 
       // Handle stdout
       ffmpegProcess.stdout.on('data', (data) => {
@@ -156,18 +159,25 @@ class RecordingManager {
         if (message.includes('Opening') && message.includes('.mp4')) {
           const match = message.match(/Opening '([^']+)'/);
           if (match) {
-            currentSegmentPath = match[1];
-            segmentStartTime = new Date();
-            logger.debug(`New segment started: ${currentSegmentPath}`);
-          }
-        }
+            const newSegmentPath = match[1];
+            const newSegmentStartTime = new Date();
 
-        // Detect when segment is finalized
-        if (message.includes('segment:') || message.includes('Closing')) {
-          if (currentSegmentPath && segmentStartTime) {
-            this.finalizeSegment(camera, currentSegmentPath, segmentStartTime).catch(err => {
-              logger.error(`Error finalizing segment ${currentSegmentPath}:`, err);
-            });
+            // When a new segment starts, finalize the PREVIOUS segment
+            // This is more reliable than trying to detect segment completion
+            if (currentSegmentPath && segmentStartTime) {
+              logger.info(`New segment detected, finalizing previous: ${currentSegmentPath}`);
+              this.finalizeSegment(camera, currentSegmentPath, segmentStartTime).catch(err => {
+                logger.error(`Error finalizing segment ${currentSegmentPath}:`, err);
+              });
+            }
+
+            // Move current to previous, and set new current
+            previousSegmentPath = currentSegmentPath;
+            previousSegmentStartTime = segmentStartTime;
+            currentSegmentPath = newSegmentPath;
+            segmentStartTime = newSegmentStartTime;
+
+            logger.debug(`New segment started: ${currentSegmentPath}`);
           }
         }
 
@@ -181,6 +191,17 @@ class RecordingManager {
       // Handle process exit
       ffmpegProcess.on('exit', async (code, signal) => {
         logger.warn(`Recording process for camera ${cameraId} exited with code ${code}, signal ${signal}`);
+
+        // Finalize the last segment if it exists
+        if (currentSegmentPath && segmentStartTime) {
+          logger.info(`Recording stopped, finalizing last segment: ${currentSegmentPath}`);
+          try {
+            await this.finalizeSegment(camera, currentSegmentPath, segmentStartTime);
+          } catch (err) {
+            logger.error(`Error finalizing last segment ${currentSegmentPath}:`, err);
+          }
+        }
+
         this.recordings.delete(cameraId);
 
         // Update camera status
@@ -241,6 +262,13 @@ class RecordingManager {
    */
   async finalizeSegment(camera, segmentPath, startTime) {
     try {
+      // Check if this segment is already in the database
+      const existingRecording = await Recording.findOne({ filePath: segmentPath });
+      if (existingRecording) {
+        logger.debug(`Segment already exists in database: ${segmentPath}`);
+        return;
+      }
+
       // Check if file exists and get stats
       const stats = await fs.stat(segmentPath);
 

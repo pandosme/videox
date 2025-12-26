@@ -138,6 +138,331 @@ router.get('/periods', apiAuth, async (req, res, next) => {
 });
 
 /**
+ * GET /api/recordings/stream-by-time
+ * Stream recording by camera serial, start time, and duration
+ * More user-friendly for external integrators
+ *
+ * Supports authentication via:
+ * - Authorization header: Bearer <token> (JWT or API token)
+ * - Query parameter: ?token=<api_token> (API token only, for simple clients)
+ *
+ * Query parameters:
+ * - cameraId: Camera serial number (required)
+ * - startTime: Start time in epoch seconds or ISO 8601 (required)
+ * - duration: Duration in seconds (optional, defaults to finding single segment)
+ * - token: API token for authentication (optional)
+ *
+ * Example: /api/recordings/stream-by-time?cameraId=B8A44F3024BB&startTime=1766759087&duration=60&token=xxx
+ */
+router.get('/stream-by-time', apiAuth, async (req, res, next) => {
+  try {
+    const { cameraId, startTime, duration } = req.query;
+
+    if (!cameraId || !startTime) {
+      return res.status(400).json({
+        error: {
+          code: 'MISSING_PARAMETERS',
+          message: 'cameraId and startTime are required',
+        },
+      });
+    }
+
+    // Parse start time (support both epoch seconds and ISO 8601)
+    const start = isNaN(startTime) ? new Date(startTime) : new Date(parseInt(startTime) * 1000);
+
+    // Build query to find recording(s) that overlap with requested time range
+    const query = {
+      cameraId,
+      status: 'completed',
+      startTime: { $lte: start },
+      endTime: { $gte: start },
+    };
+
+    // Find the recording that contains the requested start time
+    const recording = await Recording.findOne(query).sort({ startTime: 1 });
+
+    if (!recording) {
+      return res.status(404).json({
+        error: {
+          code: 'RECORDING_NOT_FOUND',
+          message: `No recording found for camera ${cameraId} at ${start.toISOString()}`,
+        },
+      });
+    }
+
+    // Check if file exists
+    const filePath = recording.filePath;
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({
+        error: {
+          code: 'FILE_NOT_FOUND',
+          message: 'Recording file not found on disk',
+        },
+      });
+    }
+
+    const stat = fs.statSync(filePath);
+    const fileSize = stat.size;
+    const range = req.headers.range;
+
+    if (range) {
+      // Handle range requests (for seeking in video)
+      const parts = range.replace(/bytes=/, '').split('-');
+      const start = parseInt(parts[0], 10);
+      const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+      const chunksize = (end - start) + 1;
+      const file = fs.createReadStream(filePath, { start, end });
+      const head = {
+        'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+        'Accept-Ranges': 'bytes',
+        'Content-Length': chunksize,
+        'Content-Type': 'video/mp4',
+      };
+      res.writeHead(206, head);
+      file.pipe(res);
+    } else {
+      // Stream entire file
+      const head = {
+        'Content-Length': fileSize,
+        'Content-Type': 'video/mp4',
+      };
+      res.writeHead(200, head);
+      fs.createReadStream(filePath).pipe(res);
+    }
+
+    logger.info(`Streaming recording by time: ${cameraId} at ${start.toISOString()}`);
+  } catch (error) {
+    logger.error('Error streaming recording by time:', error);
+    next(error);
+  }
+});
+
+/**
+ * GET /api/recordings/export-clip
+ * Export a video clip with exact duration by stitching segments
+ * Designed for event-based retrieval where exact timing matters
+ *
+ * Supports authentication via:
+ * - Authorization header: Bearer <token> (JWT or API token)
+ * - Query parameter: ?token=<api_token> (API token only, for simple clients)
+ *
+ * Query parameters:
+ * - cameraId: Camera serial number (required)
+ * - startTime: Start time in epoch seconds or ISO 8601 (required)
+ * - duration: Duration in seconds (required, can span multiple segments)
+ * - token: API token for authentication (optional)
+ *
+ * Example: /api/recordings/export-clip?cameraId=B8A44F3024BB&startTime=1766759087&duration=90&token=xxx
+ *
+ * Returns: MP4 file as download with exact duration
+ */
+router.get('/export-clip', apiAuth, async (req, res, next) => {
+  try {
+    const { cameraId, startTime, duration } = req.query;
+
+    if (!cameraId || !startTime || !duration) {
+      return res.status(400).json({
+        error: {
+          code: 'MISSING_PARAMETERS',
+          message: 'cameraId, startTime, and duration are required',
+        },
+      });
+    }
+
+    const durationSec = parseInt(duration);
+    if (durationSec <= 0 || durationSec > 3600) {
+      return res.status(400).json({
+        error: {
+          code: 'INVALID_DURATION',
+          message: 'Duration must be between 1 and 3600 seconds (1 hour)',
+        },
+      });
+    }
+
+    // Parse start time (support both epoch seconds and ISO 8601)
+    const start = isNaN(startTime) ? new Date(startTime) : new Date(parseInt(startTime) * 1000);
+    const end = new Date(start.getTime() + (durationSec * 1000));
+
+    // Find all segments that overlap with the requested time range
+    const query = {
+      cameraId,
+      status: 'completed',
+      $or: [
+        // Segment starts within range
+        { startTime: { $gte: start, $lt: end } },
+        // Segment ends within range
+        { endTime: { $gt: start, $lte: end } },
+        // Segment spans entire range
+        { startTime: { $lte: start }, endTime: { $gte: end } },
+      ],
+    };
+
+    const segments = await Recording.find(query).sort({ startTime: 1 });
+
+    if (segments.length === 0) {
+      return res.status(404).json({
+        error: {
+          code: 'NO_RECORDINGS',
+          message: `No recordings found for camera ${cameraId} in the requested time range`,
+        },
+      });
+    }
+
+    // Verify all segment files exist
+    for (const segment of segments) {
+      if (!fs.existsSync(segment.filePath)) {
+        return res.status(404).json({
+          error: {
+            code: 'FILE_NOT_FOUND',
+            message: `Recording file not found: ${segment.filename}`,
+          },
+        });
+      }
+    }
+
+    logger.info(`Exporting clip: camera=${cameraId}, start=${start.toISOString()}, duration=${durationSec}s, segments=${segments.length}`);
+
+    // Create temporary directory for processing
+    const tmpDir = path.join(process.env.STORAGE_PATH || '/tmp/videox-storage', 'tmp');
+    await fs.promises.mkdir(tmpDir, { recursive: true });
+
+    const outputFilename = `${cameraId}_${Math.floor(start.getTime() / 1000)}_${durationSec}s.mp4`;
+    const outputPath = path.join(tmpDir, outputFilename);
+
+    // If single segment and no trimming needed, just serve the file
+    if (segments.length === 1) {
+      const segment = segments[0];
+      const segmentStart = new Date(segment.startTime);
+      const segmentEnd = new Date(segment.endTime);
+
+      // Check if requested clip fits exactly within this segment
+      if (start >= segmentStart && end <= segmentEnd) {
+        // Calculate trim offsets
+        const trimStart = (start.getTime() - segmentStart.getTime()) / 1000;
+
+        // Use FFmpeg to trim the segment
+        const { spawn } = require('child_process');
+        const ffmpeg = spawn('ffmpeg', [
+          '-i', segment.filePath,
+          '-ss', trimStart.toString(),
+          '-t', durationSec.toString(),
+          '-c', 'copy',
+          '-avoid_negative_ts', 'make_zero',
+          '-y',
+          outputPath,
+        ]);
+
+        await new Promise((resolve, reject) => {
+          ffmpeg.on('exit', (code) => {
+            if (code === 0) resolve();
+            else reject(new Error(`FFmpeg exited with code ${code}`));
+          });
+          ffmpeg.on('error', reject);
+        });
+
+        // Stream the output file
+        res.setHeader('Content-Type', 'video/mp4');
+        res.setHeader('Content-Disposition', `attachment; filename="${outputFilename}"`);
+
+        const fileStream = fs.createReadStream(outputPath);
+        fileStream.pipe(res);
+
+        // Cleanup after streaming
+        fileStream.on('end', () => {
+          fs.unlink(outputPath, (err) => {
+            if (err) logger.error(`Failed to delete temp file ${outputPath}:`, err);
+          });
+        });
+
+        return;
+      }
+    }
+
+    // Multiple segments or complex trimming - need to concatenate
+    // Create a concat list file
+    const concatListPath = path.join(tmpDir, `concat_${Date.now()}.txt`);
+    const concatList = segments.map(s => `file '${s.filePath}'`).join('\n');
+    await fs.promises.writeFile(concatListPath, concatList);
+
+    // Calculate trim start (offset from first segment)
+    const firstSegmentStart = new Date(segments[0].startTime);
+    const trimStart = Math.max(0, (start.getTime() - firstSegmentStart.getTime()) / 1000);
+
+    // Use FFmpeg to concatenate and trim
+    const { spawn } = require('child_process');
+    const ffmpeg = spawn('ffmpeg', [
+      '-f', 'concat',
+      '-safe', '0',
+      '-i', concatListPath,
+      '-ss', trimStart.toString(),
+      '-t', durationSec.toString(),
+      '-c', 'copy',
+      '-avoid_negative_ts', 'make_zero',
+      '-y',
+      outputPath,
+    ]);
+
+    let ffmpegError = '';
+    ffmpeg.stderr.on('data', (data) => {
+      ffmpegError += data.toString();
+    });
+
+    await new Promise((resolve, reject) => {
+      ffmpeg.on('exit', (code) => {
+        if (code === 0) resolve();
+        else {
+          logger.error(`FFmpeg concat failed: ${ffmpegError}`);
+          reject(new Error(`FFmpeg exited with code ${code}`));
+        }
+      });
+      ffmpeg.on('error', reject);
+    });
+
+    // Clean up concat list
+    await fs.promises.unlink(concatListPath).catch(err =>
+      logger.error(`Failed to delete concat list ${concatListPath}:`, err)
+    );
+
+    // Stream the output file as download
+    res.setHeader('Content-Type', 'video/mp4');
+    res.setHeader('Content-Disposition', `attachment; filename="${outputFilename}"`);
+
+    const fileStream = fs.createReadStream(outputPath);
+    fileStream.pipe(res);
+
+    // Cleanup after streaming
+    fileStream.on('end', () => {
+      fs.unlink(outputPath, (err) => {
+        if (err) logger.error(`Failed to delete temp file ${outputPath}:`, err);
+      });
+    });
+
+    logger.info(`Clip exported successfully: ${outputFilename}`);
+  } catch (error) {
+    logger.error('Error exporting clip:', error);
+    next(error);
+  }
+});
+
+/**
+ * GET /api/recordings/active/list
+ * Get all active recordings
+ *
+ * Supports authentication via:
+ * - Authorization header: Bearer <token> (JWT or API token)
+ * - Query parameter: ?token=<api_token> (API token only, for simple clients)
+ */
+router.get('/active/list', apiAuth, async (req, res, next) => {
+  try {
+    const activeRecordings = recordingManager.getAllRecordings();
+    res.json(activeRecordings);
+  } catch (error) {
+    logger.error('Error getting active recordings:', error);
+    next(error);
+  }
+});
+
+/**
  * GET /api/recordings
  * Get recordings with filtering and pagination
  *
@@ -383,24 +708,6 @@ router.get('/:cameraId/status', apiAuth, async (req, res, next) => {
     });
   } catch (error) {
     logger.error('Error getting recording status:', error);
-    next(error);
-  }
-});
-
-/**
- * GET /api/recordings/active/list
- * Get all active recordings
- *
- * Supports authentication via:
- * - Authorization header: Bearer <token> (JWT or API token)
- * - Query parameter: ?token=<api_token> (API token only, for simple clients)
- */
-router.get('/active/list', apiAuth, async (req, res, next) => {
-  try {
-    const activeRecordings = recordingManager.getAllRecordings();
-    res.json(activeRecordings);
-  } catch (error) {
-    logger.error('Error getting active recordings:', error);
     next(error);
   }
 });

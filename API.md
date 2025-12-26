@@ -843,6 +843,10 @@ Get recording status for a camera.
 
 Get all active recordings.
 
+**Authentication Methods**
+1. Authorization header: `Authorization: Bearer <token>` (JWT or API token)
+2. Query parameter: `?token=<api_token>` (API token only)
+
 **Success Response (200 OK)**
 ```json
 [
@@ -858,6 +862,174 @@ Get all active recordings.
   }
 ]
 ```
+
+**Permissions**: All roles
+
+---
+
+### GET /recordings/stream-by-time
+
+**Stream recording by camera serial, start time, and duration (for integrators).**
+
+This endpoint provides a user-friendly way for external clients to stream recordings by camera serial number and timestamp, without needing to know MongoDB ObjectIds.
+
+**Authentication Methods**
+1. Authorization header: `Authorization: Bearer <token>` (JWT or API token)
+2. Query parameter: `?token=<api_token>` (API token only, for simple clients)
+
+**Query Parameters**
+- `cameraId` (required): Camera serial number (e.g., B8A44F3024BB)
+- `startTime` (required): Start time in epoch seconds or ISO 8601 (e.g., 1735146000)
+- `duration` (optional): Duration in seconds (not used for streaming, returns single segment)
+- `token` (optional): API token for authentication (alternative to Authorization header)
+
+**Success Response (200 OK / 206 Partial Content)**
+- Content-Type: `video/mp4`
+- Body: MP4 video data
+- Supports HTTP Range requests for video seeking
+
+**Range Request Example**
+```bash
+curl -H "Range: bytes=0-1048575" \
+  "http://localhost:3002/api/recordings/stream-by-time?cameraId=B8A44F3024BB&startTime=1735146000&token=<api_token>"
+```
+
+**Error Response (404 Not Found)**
+```json
+{
+  "error": {
+    "code": "RECORDING_NOT_FOUND",
+    "message": "No recording found for camera B8A44F3024BB at 2025-12-25T17:00:00.000Z"
+  }
+}
+```
+
+**Example - VLC Media Player**
+```
+Open Network Stream:
+http://your-server:3002/api/recordings/stream-by-time?cameraId=B8A44F3024BB&startTime=1735146000&token=<api_token>
+```
+
+**Example - cURL with Authorization Header**
+```bash
+curl -H "Authorization: Bearer <token>" \
+  "http://localhost:3002/api/recordings/stream-by-time?cameraId=B8A44F3024BB&startTime=1735146000" \
+  --output recording.mp4
+```
+
+**Use Cases**
+- Stream recordings in VLC or other media players
+- Simple integration for external clients
+- Event-based playback using timestamps
+- Mobile applications with simple authentication
+
+**Permissions**: All roles
+
+---
+
+### GET /recordings/export-clip
+
+**Export a video clip with exact duration by stitching segments.**
+
+This endpoint is designed for event-based retrieval where exact timing matters. It can span multiple 60-second segments and trim to precise start/end times, making it ideal for exporting specific events.
+
+**Authentication Methods**
+1. Authorization header: `Authorization: Bearer <token>` (JWT or API token)
+2. Query parameter: `?token=<api_token>` (API token only, for simple clients)
+
+**Query Parameters**
+- `cameraId` (required): Camera serial number (e.g., B8A44F3024BB)
+- `startTime` (required): Start time in epoch seconds or ISO 8601 (e.g., 1735146000)
+- `duration` (required): Duration in seconds (can span multiple segments, max 3600 seconds)
+- `token` (optional): API token for authentication (alternative to Authorization header)
+
+**Success Response (200 OK)**
+- Content-Type: `video/mp4`
+- Content-Disposition: `attachment; filename="B8A44F3024BB_1735146000_90s.mp4"`
+- Body: MP4 video file (exact duration as requested)
+
+**Behavior**
+1. **Single Segment Optimization**: If requested time range fits within one 60-second segment, FFmpeg trims only that segment
+2. **Multi-Segment Stitching**: If time range spans multiple segments:
+   - Finds all overlapping segments
+   - Uses FFmpeg concat demuxer to stitch them
+   - Trims to exact start time and duration
+   - Uses `-c copy` (no re-encoding, fast processing)
+   - Temporary files are cleaned up automatically
+
+**Error Responses**
+
+400 Bad Request (Missing Parameters):
+```json
+{
+  "error": {
+    "code": "MISSING_PARAMETERS",
+    "message": "cameraId, startTime, and duration are required"
+  }
+}
+```
+
+400 Bad Request (Invalid Duration):
+```json
+{
+  "error": {
+    "code": "INVALID_DURATION",
+    "message": "Duration must be between 1 and 3600 seconds (1 hour)"
+  }
+}
+```
+
+404 Not Found (No Recordings):
+```json
+{
+  "error": {
+    "code": "NO_RECORDINGS",
+    "message": "No recordings found for camera B8A44F3024BB in the requested time range"
+  }
+}
+```
+
+404 Not Found (File Missing):
+```json
+{
+  "error": {
+    "code": "FILE_NOT_FOUND",
+    "message": "Recording file not found: segment_20251225_170000.mp4"
+  }
+}
+```
+
+**Example - Export 90-second clip (spans 2 segments)**
+```bash
+curl "http://localhost:3002/api/recordings/export-clip?cameraId=B8A44F3024BB&startTime=1735146000&duration=90&token=<api_token>" \
+  --output event_clip.mp4
+```
+
+**Example - VLC Media Player**
+```
+Open Network Stream:
+http://your-server:3002/api/recordings/export-clip?cameraId=B8A44F3024BB&startTime=1735146000&duration=35&token=<api_token>
+```
+
+**Example - Event-based Export Workflow**
+```javascript
+// 1. User reports event at specific time
+const eventTime = Math.floor(new Date('2025-12-25T17:00:15Z').getTime() / 1000); // 1735146015
+
+// 2. Export 2-minute clip (1 minute before, 1 minute after event)
+const startTime = eventTime - 60;  // Start 1 minute before
+const duration = 120;  // 2 minutes total
+
+// 3. Download clip
+const url = `/api/recordings/export-clip?cameraId=B8A44F3024BB&startTime=${startTime}&duration=${duration}&token=<api_token>`;
+```
+
+**Use Cases**
+- Export video clips for specific events (motion detection, alerts, incidents)
+- Download evidence with exact timestamps for investigations
+- Create highlight reels from multiple cameras
+- Automated backup of critical events
+- Integration with alarm systems (export footage when alarm triggers)
 
 **Permissions**: All roles
 
@@ -1034,7 +1206,7 @@ Get all active streams.
 
 ### GET /storage/stats
 
-Get storage statistics.
+Get storage statistics including per-camera breakdown.
 
 **Success Response (200 OK)**
 ```json
@@ -1047,24 +1219,292 @@ Get storage statistics.
     "count": 43200,
     "totalSizeGB": 125.3
   },
-  "byCam era": [
+  "perCamera": [
     {
       "cameraId": "B8A44F3024BB",
-      "name": "Front Camera",
+      "cameraName": "Front Camera",
       "recordingCount": 21600,
-      "totalSizeGB": 62.7
+      "continuousSegments": 15,
+      "sizeGB": 62.7,
+      "oldestRecording": "2024-12-01T00:00:00.000Z",
+      "newestRecording": "2025-12-26T15:00:00.000Z",
+      "retentionDays": 30
     },
     {
       "cameraId": "B8A44FF11A35",
-      "name": "Back Camera",
+      "cameraName": "Back Camera",
       "recordingCount": 21600,
-      "totalSizeGB": 62.6
+      "continuousSegments": 12,
+      "sizeGB": 62.6,
+      "oldestRecording": "2024-12-01T00:00:00.000Z",
+      "newestRecording": "2025-12-26T15:00:00.000Z",
+      "retentionDays": 30
     }
   ]
 }
 ```
 
+**Field Descriptions**
+- `continuousSegments`: Number of continuous recording periods (fewer is better - indicates less gaps)
+- `oldestRecording`: Timestamp of oldest recording for this camera
+- `newestRecording`: Timestamp of newest recording for this camera
+- `retentionDays`: Retention period configured for this camera
+
 **Permissions**: All roles
+
+---
+
+### GET /storage/integrity
+
+**Check storage integrity - verify database vs filesystem.**
+
+This endpoint performs a comprehensive integrity check of the recording storage system, comparing database records against actual files on disk. It identifies missing files, orphaned files, and stuck recording statuses.
+
+**Success Response (200 OK)**
+```json
+{
+  "summary": {
+    "healthy": false,
+    "dbRecordingsChecked": 43200,
+    "missingFiles": 3,
+    "orphanedFiles": 15,
+    "stuckRecordings": 0,
+    "totalIssues": 18
+  },
+  "issues": [
+    {
+      "type": "MISSING_FILE",
+      "severity": "error",
+      "recordingId": "676c0a1f8e9b4c001a2b3c4d",
+      "cameraId": "B8A44F3024BB",
+      "filePath": "/path/to/segment_20251225_170000.mp4",
+      "startTime": "2025-12-25T17:00:00.000Z",
+      "message": "Database record exists but file is missing: /path/to/segment_20251225_170000.mp4"
+    },
+    {
+      "type": "ORPHANED_FILE",
+      "severity": "warning",
+      "filePath": "/path/to/segment_20251225_180000.mp4",
+      "cameraId": "B8A44F3024BB",
+      "message": "File exists without database record: /path/to/segment_20251225_180000.mp4"
+    },
+    {
+      "type": "STUCK_STATUS",
+      "severity": "warning",
+      "recordingId": "676c0b2f8e9b4c001a2b3d5e",
+      "cameraId": "B8A44FF11A35",
+      "message": "Recording stuck in 'recording' status for 127 minutes"
+    }
+  ]
+}
+```
+
+**Issue Types**
+- `MISSING_FILE` (error): Database record exists but file is missing from disk - data loss
+- `ORPHANED_FILE` (warning): File exists on disk but no database record - can be imported or removed
+- `STUCK_STATUS` (warning): Recording stuck in 'recording' status for >5 minutes - likely crashed
+
+**Healthy Response Example**
+```json
+{
+  "summary": {
+    "healthy": true,
+    "dbRecordingsChecked": 43200,
+    "missingFiles": 0,
+    "orphanedFiles": 0,
+    "stuckRecordings": 0,
+    "totalIssues": 0
+  },
+  "issues": []
+}
+```
+
+**Use Cases**
+- Routine storage health checks
+- Diagnose recording issues
+- Identify data corruption or file system problems
+- Pre-maintenance verification
+- After system crashes or power failures
+
+**Permissions**: Admin, Operator
+
+---
+
+### POST /storage/integrity/import-orphaned
+
+**Import orphaned files into database.**
+
+This endpoint scans the filesystem for video files that exist on disk but have no corresponding database records, and creates database entries for them. This is useful for recovering from database corruption or importing recordings that were created when the database was unavailable.
+
+**Request Body**: None
+
+**Success Response (200 OK)**
+```json
+{
+  "success": true,
+  "importedCount": 1087,
+  "failedCount": 3,
+  "errors": [
+    "Invalid filename format: corrupted_file.mp4",
+    "Failed to import old_recording.mp4: Invalid timestamp",
+    "Failed to import test.mp4: File too small"
+  ],
+  "message": "Successfully imported 1087 recordings into database"
+}
+```
+
+**Process**
+1. Scans all camera directories recursively for .mp4 files
+2. Checks if file already has database record (skips if exists)
+3. Parses filename to extract timestamp:
+   - New format: `{SERIAL}_segment_YYYYMMDD_HHMMSS.mp4`
+   - Old format: `segment_YYYYMMDD_HHMMSS.mp4`
+4. Gets file stats (size, modification time)
+5. Creates Recording document in MongoDB
+6. Calculates retention date based on camera settings
+7. Returns summary of imports and failures
+
+**Filename Format Requirements**
+- Must match pattern: `{SERIAL}_segment_YYYYMMDD_HHMMSS.mp4` or `segment_YYYYMMDD_HHMMSS.mp4`
+- Example: `B8A44F3024BB_segment_20251225_170000.mp4`
+- Timestamp must be valid date/time
+
+**Notes**
+- Progress is logged every 100 imports
+- Only first 10 errors are returned in response
+- Check backend logs for full error details
+- Safe to run multiple times (skips existing records)
+- Duration is assumed to be 60 seconds
+- End time is calculated as startTime + 60 seconds
+
+**Use Cases**
+- Recover from database corruption or loss
+- Import recordings after database was offline
+- Migrate recordings from backup storage
+- Fix database after filesystem restore
+
+**Permissions**: Admin only
+
+---
+
+### DELETE /storage/integrity/remove-orphaned
+
+**Remove orphaned files from filesystem.**
+
+This endpoint deletes video files that exist on disk but have no corresponding database records. Use this to clean up orphaned files and reclaim storage space after verifying they are not needed.
+
+**Request Body**: None
+
+**Success Response (200 OK)**
+```json
+{
+  "success": true,
+  "deletedCount": 578,
+  "failedCount": 2,
+  "errors": [
+    "Failed to delete segment_20251220_010000.mp4: Permission denied",
+    "Failed to delete segment_20251220_020000.mp4: File in use"
+  ],
+  "message": "Successfully deleted 578 orphaned files"
+}
+```
+
+**Process**
+1. Gets all database recording file paths
+2. Scans all camera directories for .mp4 files
+3. Identifies files not in database (orphaned)
+4. Deletes orphaned files
+5. Returns summary of deletions and failures
+
+**Safety**
+- Only deletes .mp4 files
+- Only deletes files NOT in database
+- Does not affect active recordings
+- Progress logged every 100 deletions
+- Only first 10 errors returned in response
+
+**Warning**
+This is a destructive operation. Deleted files cannot be recovered. Consider using `POST /storage/integrity/import-orphaned` first to import any files you want to keep before running this cleanup.
+
+**Recommended Workflow**
+1. Run `GET /storage/integrity` to identify orphaned files
+2. Run `POST /storage/integrity/import-orphaned` to import files you want to keep
+3. Run `GET /storage/integrity` again to verify remaining orphans
+4. Run `DELETE /storage/integrity/remove-orphaned` to delete remaining orphans
+
+**Permissions**: Admin only
+
+---
+
+### DELETE /storage/flush-all
+
+**Flush all recordings - delete all database records and files.**
+
+**⚠️ DESTRUCTIVE OPERATION - USE WITH EXTREME CAUTION**
+
+This endpoint permanently deletes ALL recording metadata from the database and ALL video files from the filesystem across all cameras. This operation is irreversible and intended only for complete system resets or testing.
+
+**Request Body**: None
+
+**Success Response (200 OK)**
+```json
+{
+  "success": true,
+  "deletedDbRecords": 43200,
+  "deletedFiles": 43187,
+  "errors": [
+    "Failed to delete /path/to/file1.mp4: Permission denied",
+    "Failed to delete /path/to/file2.mp4: File in use"
+  ],
+  "message": "Successfully flushed all recordings: 43200 database records and 43187 files deleted"
+}
+```
+
+**Process**
+1. Deletes ALL Recording documents from MongoDB
+2. Scans all camera directories recursively
+3. Deletes all .mp4 files from filesystem
+4. Returns summary of deletions and errors
+5. Audit log entry created (FLUSH_ALL)
+
+**What Gets Deleted**
+- ✅ All recording metadata in MongoDB
+- ✅ All .mp4 video files in storage directory
+- ✅ All segments across all cameras
+
+**What Is Preserved**
+- ✅ Camera configurations
+- ✅ User accounts
+- ✅ System settings
+- ✅ Ongoing recordings (will continue)
+- ✅ Directory structure
+
+**Important Notes**
+- This operation is **irreversible** - deleted data cannot be recovered
+- Ongoing recordings will continue and create new database entries
+- Only affects recordings, not camera configurations or users
+- Use this only when you want to completely reset recording storage
+- Progress logged for every 100 file deletions
+- Only first 10 errors returned in response
+
+**Typical Use Cases**
+- Complete system reset during testing
+- Clean slate after migration or testing period
+- Remove all data before decommissioning
+- Testing retention policies from scratch
+
+**Security**
+- Requires Admin role
+- Operation is logged with admin username
+- Consider backing up before using this endpoint
+
+**Example**
+```bash
+curl -X DELETE "http://localhost:3002/api/storage/flush-all" \
+  -H "Authorization: Bearer <admin_token>"
+```
+
+**Permissions**: Admin only
 
 ---
 
@@ -1844,8 +2284,36 @@ curl http://localhost:3002/api/recordings/676c0a1f8e9b4c001a2b3c4d/stream \
 - User management
 - Event logging
 
+### Version 1.1.0 (2025-12-26)
+- **New Recording Endpoints**:
+  - `GET /recordings/stream-by-time`: Stream recordings by camera serial and timestamp (VLC-friendly)
+  - `GET /recordings/export-clip`: Export clips with exact duration spanning multiple segments
+  - Support for query parameter authentication (`?token=`) for simple clients
+
+- **Storage Integrity Management**:
+  - `GET /storage/integrity`: Comprehensive storage health check (missing files, orphaned files, stuck recordings)
+  - `POST /storage/integrity/import-orphaned`: Import orphaned files into database
+  - `DELETE /storage/integrity/remove-orphaned`: Remove orphaned files from filesystem
+  - `DELETE /storage/flush-all`: Complete storage reset (admin only)
+
+- **Enhanced Storage Stats**:
+  - Added `continuousSegments` to per-camera breakdown (tracks recording gaps)
+  - Added `oldestRecording` and `newestRecording` timestamps per camera
+
+- **Recording Improvements**:
+  - Camera serial number prefix in filenames prevents cross-camera duplicates
+  - Fixed segment finalization to reliably create database entries
+  - Improved FFmpeg segment detection for better reliability
+  - Auto-resume recordings after server restart
+
+- **Bug Fixes**:
+  - Fixed Express route ordering (specific routes now match before generic `:id` routes)
+  - Fixed duplicate key errors on filename index
+  - Fixed white text visibility in storage location display
+  - Improved error handling for missing recordings
+
 ### Future Versions
-- 1.1.0: WebSocket support for real-time events
-- 1.2.0: Event timeline and notifications
-- 1.3.0: PTZ camera control
+- 1.2.0: WebSocket support for real-time events
+- 1.3.0: Event timeline and notifications
+- 1.4.0: PTZ camera control
 - 2.0.0: Multi-site management

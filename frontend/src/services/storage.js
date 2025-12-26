@@ -36,3 +36,39 @@ export const previewCleanup = async () => {
   const response = await api.get('/storage/cleanup/preview');
   return response.data;
 };
+
+/**
+ * Check storage integrity
+ * @returns {Promise<Object>} - Integrity check results
+ */
+export const checkIntegrity = async () => {
+  const response = await api.get('/storage/integrity');
+  return response.data;
+};
+
+/**
+ * Import orphaned files into database
+ * @returns {Promise<Object>} - Import results
+ */
+export const importOrphanedFiles = async () => {
+  const response = await api.post('/storage/integrity/import-orphaned');
+  return response.data;
+};
+
+/**
+ * Remove orphaned files from filesystem
+ * @returns {Promise<Object>} - Removal results
+ */
+export const removeOrphanedFiles = async () => {
+  const response = await api.delete('/storage/integrity/remove-orphaned');
+  return response.data;
+};
+
+/**
+ * Flush all recordings - delete all database records and files
+ * @returns {Promise<Object>} - Flush results
+ */
+export const flushAllRecordings = async () => {
+  const response = await api.delete('/storage/flush-all');
+  return response.data;
+};
