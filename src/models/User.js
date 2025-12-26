@@ -34,8 +34,7 @@ const userSchema = new mongoose.Schema(
   }
 );
 
-// Indexes
-userSchema.index({ username: 1 }, { unique: true });
+// Indexes (username already has unique index from schema definition)
 userSchema.index({ active: 1 });
 userSchema.index({ role: 1 });
 

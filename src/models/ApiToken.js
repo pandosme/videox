@@ -36,8 +36,7 @@ const apiTokenSchema = new mongoose.Schema(
   }
 );
 
-// Indexes
-apiTokenSchema.index({ token: 1 });
+// Indexes (token already has unique index from schema definition)
 apiTokenSchema.index({ userId: 1 });
 apiTokenSchema.index({ active: 1 });
 

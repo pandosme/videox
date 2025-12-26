@@ -22,8 +22,7 @@ const systemConfigSchema = new mongoose.Schema(
   }
 );
 
-// Indexes
-systemConfigSchema.index({ key: 1 }, { unique: true });
+// Indexes (key already has unique index from schema definition)
 
 // Static method to get config value
 systemConfigSchema.statics.getValue = async function (key, defaultValue = null) {

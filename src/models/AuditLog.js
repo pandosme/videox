@@ -3,8 +3,7 @@ const mongoose = require('mongoose');
 const auditLogSchema = new mongoose.Schema(
   {
     userId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
+      type: mongoose.Schema.Types.Mixed, // Accepts ObjectId or String (for 'admin' user)
       required: true,
       index: true,
     },
