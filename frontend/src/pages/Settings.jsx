@@ -233,10 +233,26 @@ function Settings() {
               {/* API Documentation */}
               <Box sx={{ mt: 3, p: 2, bgcolor: 'grey.100', borderRadius: 1 }}>
                 <Typography variant="subtitle2" gutterBottom>
-                  Export API Usage
+                  API Endpoints for Integration
                 </Typography>
                 <Typography variant="body2" component="pre" sx={{ fontFamily: 'monospace', fontSize: '0.85rem' }}>
-{`GET /api/export
+{`1. List Recording Periods (discover available footage):
+GET /api/recordings/periods?cameraId=B8A44F3024BB
+
+Response:
+{
+  "periods": [{
+    "cameraId": "B8A44F3024BB",
+    "startTimeEpoch": 1735146000,
+    "endTimeEpoch": 1735151400,
+    "durationSeconds": 5400
+  }],
+  "total": 1
+}
+
+2. Export/Stream Recording:
+GET /api/export?cameraId=B8A44F3024BB&startTime=1735146000&duration=60
+
 Query Parameters:
   - cameraId: Camera serial number (required)
   - startTime: Start time in epoch seconds (required)
@@ -246,11 +262,11 @@ Query Parameters:
 
 Method 1 - Authorization Header:
   curl -H "Authorization: Bearer <token>" \\
-    "/api/export?cameraId=B8A44F3024BB&startTime=1735146000&duration=60" \\
+    "http://server:3002/api/export?cameraId=B8A44F3024BB&startTime=1735146000&duration=60" \\
     -o recording.mp4
 
 Method 2 - Query Parameter (simpler for VLC, etc):
-  curl "/api/export?cameraId=B8A44F3024BB&startTime=1735146000&duration=60&token=<token>" \\
+  curl "http://server:3002/api/export?cameraId=B8A44F3024BB&startTime=1735146000&duration=60&token=<token>" \\
     -o recording.mp4
 
 VLC Network Stream:

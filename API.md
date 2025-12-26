@@ -585,6 +585,103 @@ Get recordings with filtering and pagination.
 
 ---
 
+### GET /recordings/periods
+
+**Get continuous recording periods (for integrators).**
+
+This endpoint is designed for external integrations and clients. Instead of returning individual 60-second segments, it groups consecutive recordings into continuous periods/blocks, making it easier to discover available footage.
+
+**Query Parameters**
+- `cameraId` (optional): Filter by camera serial number (returns all cameras if not specified)
+- `startDate` (optional): Filter periods starting after this date (ISO 8601 or epoch seconds)
+- `endDate` (optional): Filter periods ending before this date (ISO 8601 or epoch seconds)
+- `minDuration` (optional): Minimum period duration in seconds
+- `gapThreshold` (optional): Maximum gap in seconds to consider recordings continuous (default: 120)
+
+**Success Response (200 OK)**
+```json
+{
+  "periods": [
+    {
+      "cameraId": "B8A44F3024BB",
+      "startTime": "2025-12-25T17:00:00.000Z",
+      "endTime": "2025-12-25T18:30:00.000Z",
+      "startTimeEpoch": 1735146000,
+      "endTimeEpoch": 1735151400,
+      "durationSeconds": 5400,
+      "segmentCount": 90,
+      "totalSize": 408117080,
+      "firstSegmentId": "676c0a1f8e9b4c001a2b3c4d",
+      "lastSegmentId": "676c0f3e8e9b4c001a2b3d5e"
+    },
+    {
+      "cameraId": "B8A44F3024BB",
+      "startTime": "2025-12-25T20:00:00.000Z",
+      "endTime": "2025-12-25T21:15:00.000Z",
+      "startTimeEpoch": 1735156800,
+      "endTimeEpoch": 1735161300,
+      "durationSeconds": 4500,
+      "segmentCount": 75,
+      "totalSize": 340097567,
+      "firstSegmentId": "676c1a2f8e9b4c001a2b3e6f",
+      "lastSegmentId": "676c1e4d8e9b4c001a2b3f80"
+    }
+  ],
+  "total": 2,
+  "gapThreshold": 120
+}
+```
+
+**Period Object Fields**
+- `cameraId`: Camera serial number
+- `startTime`: Period start time (ISO 8601)
+- `endTime`: Period end time (ISO 8601)
+- `startTimeEpoch`: Period start time (Unix epoch seconds) - use this for export API
+- `endTimeEpoch`: Period end time (Unix epoch seconds)
+- `durationSeconds`: Total duration in seconds
+- `segmentCount`: Number of 60-second segments in this period
+- `totalSize`: Total file size in bytes
+- `firstSegmentId`: MongoDB ID of first segment
+- `lastSegmentId`: MongoDB ID of last segment
+
+**Example - Get all periods for a specific camera**
+```
+GET /api/recordings/periods?cameraId=B8A44F3024BB
+```
+
+**Example - Get periods within date range**
+```
+GET /api/recordings/periods?cameraId=B8A44F3024BB&startDate=1735146000&endDate=1735232400
+```
+
+**Example - Get periods longer than 1 hour**
+```
+GET /api/recordings/periods?cameraId=B8A44F3024BB&minDuration=3600
+```
+
+**Example - Use with export API**
+```bash
+# 1. Get available recording periods
+curl -H "Authorization: Bearer <token>" \
+  "http://localhost:3002/api/recordings/periods?cameraId=B8A44F3024BB"
+
+# 2. Use startTimeEpoch and durationSeconds from response to export
+curl -H "Authorization: Bearer <token>" \
+  "http://localhost:3002/api/export?cameraId=B8A44F3024BB&startTime=1735146000&duration=5400" \
+  -o recording.mp4
+```
+
+**Use Cases**
+- List all available footage before requesting export
+- Display recording timeline in client applications
+- Discover gaps in recordings
+- Calculate storage usage per camera
+- Build recording browsers/players
+
+**Permissions**: All roles
+
+---
+
 ### GET /recordings/:id
 
 Get recording details by ID.

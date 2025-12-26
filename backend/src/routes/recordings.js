@@ -13,6 +13,128 @@ const logger = require('../utils/logger');
 router.use(authenticate);
 
 /**
+ * GET /api/recordings/periods
+ * Get continuous recording periods (grouped segments)
+ * Designed for integrators - returns consolidated blocks instead of individual 60s segments
+ *
+ * Query parameters:
+ * - cameraId: Filter by camera serial number (optional, returns all cameras if not specified)
+ * - startDate: Filter periods starting after this date (ISO 8601 or epoch seconds)
+ * - endDate: Filter periods ending before this date (ISO 8601 or epoch seconds)
+ * - minDuration: Minimum period duration in seconds (optional)
+ * - gapThreshold: Max gap in seconds to consider recordings continuous (default: 120)
+ */
+router.get('/periods', async (req, res, next) => {
+  try {
+    const {
+      cameraId,
+      startDate,
+      endDate,
+      minDuration,
+      gapThreshold = 120, // 2 minutes default gap threshold
+    } = req.query;
+
+    // Build query
+    const query = { status: 'completed' }; // Only include completed recordings
+
+    if (cameraId) {
+      query.cameraId = cameraId;
+    }
+
+    if (startDate || endDate) {
+      query.startTime = {};
+      if (startDate) {
+        // Support both ISO 8601 and epoch seconds
+        const start = isNaN(startDate) ? new Date(startDate) : new Date(parseInt(startDate) * 1000);
+        query.startTime.$gte = start;
+      }
+      if (endDate) {
+        const end = isNaN(endDate) ? new Date(endDate) : new Date(parseInt(endDate) * 1000);
+        query.startTime.$lte = end;
+      }
+    }
+
+    // Fetch all matching recordings sorted by camera and time
+    const recordings = await Recording.find(query)
+      .sort({ cameraId: 1, startTime: 1 })
+      .lean();
+
+    if (recordings.length === 0) {
+      return res.json({ periods: [], total: 0 });
+    }
+
+    // Group recordings into continuous periods
+    const periods = [];
+    const threshold = parseInt(gapThreshold) * 1000; // Convert to milliseconds
+    let currentPeriod = null;
+
+    for (const recording of recordings) {
+      if (!currentPeriod ||
+          currentPeriod.cameraId !== recording.cameraId ||
+          (new Date(recording.startTime) - new Date(currentPeriod.endTime)) > threshold) {
+
+        // Start new period
+        if (currentPeriod) {
+          periods.push(currentPeriod);
+        }
+
+        currentPeriod = {
+          cameraId: recording.cameraId,
+          startTime: recording.startTime,
+          endTime: recording.endTime,
+          segmentCount: 1,
+          totalSize: recording.size,
+          firstSegmentId: recording._id,
+          lastSegmentId: recording._id,
+        };
+      } else {
+        // Extend current period
+        currentPeriod.endTime = recording.endTime;
+        currentPeriod.segmentCount++;
+        currentPeriod.totalSize += recording.size;
+        currentPeriod.lastSegmentId = recording._id;
+      }
+    }
+
+    // Add last period
+    if (currentPeriod) {
+      periods.push(currentPeriod);
+    }
+
+    // Calculate duration and filter by minDuration
+    const finalPeriods = periods
+      .map(period => {
+        const durationMs = new Date(period.endTime) - new Date(period.startTime);
+        const durationSeconds = Math.round(durationMs / 1000);
+
+        return {
+          ...period,
+          durationSeconds,
+          startTimeEpoch: Math.floor(new Date(period.startTime).getTime() / 1000),
+          endTimeEpoch: Math.floor(new Date(period.endTime).getTime() / 1000),
+        };
+      })
+      .filter(period => {
+        if (minDuration) {
+          return period.durationSeconds >= parseInt(minDuration);
+        }
+        return true;
+      });
+
+    logger.info(`Returning ${finalPeriods.length} recording periods (from ${recordings.length} segments)`);
+
+    res.json({
+      periods: finalPeriods,
+      total: finalPeriods.length,
+      gapThreshold: parseInt(gapThreshold),
+    });
+  } catch (error) {
+    logger.error('Error fetching recording periods:', error);
+    next(error);
+  }
+});
+
+/**
  * GET /api/recordings
  * Get recordings with filtering and pagination
  */
