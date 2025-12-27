@@ -10,7 +10,7 @@ VideoX is **not a complete VMS** - it's a backend recording engine that:
 - Manages storage with configurable retention policies
 - Runs as a Docker container with embedded MongoDB
 
-**VideoX does not include a UI** - you need a separate client application to manage cameras and view recordings.
+**VideoX does not include a UI** - you need a separate client application to manage cameras and view recordings. Install [videox-client](https://github.com/pandosme/videox-client) to manage one or more server instances.
 
 ## Architecture
 
