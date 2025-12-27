@@ -217,7 +217,7 @@ router.get('/stream-by-time', apiAuth, async (req, res, next) => {
         'Accept-Ranges': 'bytes',
         'Content-Length': chunksize,
         'Content-Type': 'video/mp4',
-        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Origin': req.headers.origin || '*',
         'Cross-Origin-Resource-Policy': 'cross-origin',
       };
       res.writeHead(206, head);
@@ -227,7 +227,7 @@ router.get('/stream-by-time', apiAuth, async (req, res, next) => {
       const head = {
         'Content-Length': fileSize,
         'Content-Type': 'video/mp4',
-        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Origin': req.headers.origin || '*',
         'Cross-Origin-Resource-Policy': 'cross-origin',
       };
       res.writeHead(200, head);
@@ -402,7 +402,7 @@ router.get('/export-clip', apiAuth, async (req, res, next) => {
             'Content-Length': chunksize,
             'Content-Type': 'video/mp4',
             'Content-Disposition': `inline; filename="${outputFilename}"`,
-            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Origin': req.headers.origin || '*',
             'Cross-Origin-Resource-Policy': 'cross-origin',
           });
 
@@ -422,7 +422,7 @@ router.get('/export-clip', apiAuth, async (req, res, next) => {
             'Content-Type': 'video/mp4',
             'Content-Disposition': `inline; filename="${outputFilename}"`,
             'Accept-Ranges': 'bytes',
-            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Origin': req.headers.origin || '*',
             'Cross-Origin-Resource-Policy': 'cross-origin',
           });
 
@@ -516,7 +516,7 @@ router.get('/export-clip', apiAuth, async (req, res, next) => {
         'Content-Length': chunksize,
         'Content-Type': 'video/mp4',
         'Content-Disposition': `inline; filename="${outputFilename}"`,
-        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Origin': req.headers.origin || '*',
         'Cross-Origin-Resource-Policy': 'cross-origin',
       });
 
@@ -536,7 +536,7 @@ router.get('/export-clip', apiAuth, async (req, res, next) => {
         'Content-Type': 'video/mp4',
         'Content-Disposition': `inline; filename="${outputFilename}"`,
         'Accept-Ranges': 'bytes',
-        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Origin': req.headers.origin || '*',
         'Cross-Origin-Resource-Policy': 'cross-origin',
       });
 
@@ -717,7 +717,7 @@ router.get('/:id/stream', apiAuth, async (req, res, next) => {
         'Accept-Ranges': 'bytes',
         'Content-Length': chunksize,
         'Content-Type': 'video/mp4',
-        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Origin': req.headers.origin || '*',
         'Cross-Origin-Resource-Policy': 'cross-origin',
       });
 
@@ -727,7 +727,7 @@ router.get('/:id/stream', apiAuth, async (req, res, next) => {
       res.writeHead(200, {
         'Content-Length': fileSize,
         'Content-Type': 'video/mp4',
-        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Origin': req.headers.origin || '*',
         'Cross-Origin-Resource-Policy': 'cross-origin',
       });
 

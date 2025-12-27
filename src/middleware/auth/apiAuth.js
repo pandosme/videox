@@ -76,8 +76,8 @@ const apiAuth = async (req, res, next) => {
       logger.debug('JWT verification failed, trying API token');
     }
 
-    // Try API token
-    const apiToken = await ApiToken.findOne({ token, active: true }).populate('userId');
+    // Try API token (don't populate yet - need to handle admin user)
+    const apiToken = await ApiToken.findOne({ token, active: true });
 
     if (!apiToken) {
       return res.status(401).json({
@@ -97,6 +97,27 @@ const apiAuth = async (req, res, next) => {
         },
       });
     }
+
+    // Handle single-user admin system (userId: 'admin' from .env)
+    if (apiToken.userId === 'admin') {
+      req.user = {
+        id: 'admin',
+        username: process.env.ADMIN_USERNAME,
+        role: 'admin',
+      };
+      req.authType = 'api_token';
+      req.apiToken = apiToken;
+
+      // Update last used timestamp (async, don't wait)
+      apiToken.updateLastUsed().catch(err => {
+        logger.error('Error updating API token last used:', err);
+      });
+
+      return next();
+    }
+
+    // Handle database users (multi-user system) - populate the user
+    await apiToken.populate('userId');
 
     // Check if user is still active
     if (!apiToken.userId || !apiToken.userId.active) {

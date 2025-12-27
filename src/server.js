@@ -36,9 +36,14 @@ app.use(helmet({
 })); // Security headers
 
 // CORS configuration - Allow all origins for external integrations
+// Use dynamic origin to avoid Opaque Response Blocking (ORB) for media files
 app.use(cors({
-  origin: '*', // Allow all origins
-  credentials: false, // Must be false when origin is '*' (browser security requirement)
+  origin: function (origin, callback) {
+    // Allow all origins by reflecting the request origin
+    // This works around browser ORB blocking for video/media files
+    callback(null, origin || '*');
+  },
+  credentials: false,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'Range'],
   exposedHeaders: ['Content-Range', 'Accept-Ranges', 'Content-Length'],
