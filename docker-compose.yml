@@ -78,9 +78,6 @@ services:
       # Default: Every 6 hours
       CLEANUP_SCHEDULE: "0 */6 * * *"
 
-      # CORS configuration (* allows all origins)
-      CORS_ORIGIN: "*"
-
       # Performance limits
       MAX_CONCURRENT_STREAMS: 20
       MAX_CONCURRENT_EXPORTS: 3

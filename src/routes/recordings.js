@@ -217,6 +217,8 @@ router.get('/stream-by-time', apiAuth, async (req, res, next) => {
         'Accept-Ranges': 'bytes',
         'Content-Length': chunksize,
         'Content-Type': 'video/mp4',
+        'Access-Control-Allow-Origin': '*',
+        'Cross-Origin-Resource-Policy': 'cross-origin',
       };
       res.writeHead(206, head);
       file.pipe(res);
@@ -225,6 +227,8 @@ router.get('/stream-by-time', apiAuth, async (req, res, next) => {
       const head = {
         'Content-Length': fileSize,
         'Content-Type': 'video/mp4',
+        'Access-Control-Allow-Origin': '*',
+        'Cross-Origin-Resource-Policy': 'cross-origin',
       };
       res.writeHead(200, head);
       fs.createReadStream(filePath).pipe(res);
@@ -380,19 +384,58 @@ router.get('/export-clip', apiAuth, async (req, res, next) => {
           });
         });
 
-        // Stream the output file
-        res.setHeader('Content-Type', 'video/mp4');
-        res.setHeader('Content-Disposition', `attachment; filename="${outputFilename}"`);
+        // Stream the output file with range support
+        const stat = fs.statSync(outputPath);
+        const fileSize = stat.size;
+        const range = req.headers.range;
 
-        const fileStream = fs.createReadStream(outputPath);
-        fileStream.pipe(res);
+        if (range) {
+          // Handle range requests for video seeking
+          const parts = range.replace(/bytes=/, '').split('-');
+          const start = parseInt(parts[0], 10);
+          const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+          const chunksize = (end - start) + 1;
 
-        // Cleanup after streaming
-        fileStream.on('end', () => {
-          fs.unlink(outputPath, (err) => {
-            if (err) logger.error(`Failed to delete temp file ${outputPath}:`, err);
+          res.writeHead(206, {
+            'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+            'Accept-Ranges': 'bytes',
+            'Content-Length': chunksize,
+            'Content-Type': 'video/mp4',
+            'Content-Disposition': `inline; filename="${outputFilename}"`,
+            'Access-Control-Allow-Origin': '*',
+            'Cross-Origin-Resource-Policy': 'cross-origin',
           });
-        });
+
+          const fileStream = fs.createReadStream(outputPath, { start, end });
+          fileStream.pipe(res);
+
+          // Cleanup after streaming
+          fileStream.on('end', () => {
+            fs.unlink(outputPath, (err) => {
+              if (err) logger.error(`Failed to delete temp file ${outputPath}:`, err);
+            });
+          });
+        } else {
+          // Stream entire file
+          res.writeHead(200, {
+            'Content-Length': fileSize,
+            'Content-Type': 'video/mp4',
+            'Content-Disposition': `inline; filename="${outputFilename}"`,
+            'Accept-Ranges': 'bytes',
+            'Access-Control-Allow-Origin': '*',
+            'Cross-Origin-Resource-Policy': 'cross-origin',
+          });
+
+          const fileStream = fs.createReadStream(outputPath);
+          fileStream.pipe(res);
+
+          // Cleanup after streaming
+          fileStream.on('end', () => {
+            fs.unlink(outputPath, (err) => {
+              if (err) logger.error(`Failed to delete temp file ${outputPath}:`, err);
+            });
+          });
+        }
 
         return;
       }
@@ -455,19 +498,58 @@ router.get('/export-clip', apiAuth, async (req, res, next) => {
       logger.error(`Failed to delete concat list ${concatListPath}:`, err)
     );
 
-    // Stream the output file as download
-    res.setHeader('Content-Type', 'video/mp4');
-    res.setHeader('Content-Disposition', `attachment; filename="${outputFilename}"`);
+    // Stream the output file with range support
+    const stat = fs.statSync(outputPath);
+    const fileSize = stat.size;
+    const range = req.headers.range;
 
-    const fileStream = fs.createReadStream(outputPath);
-    fileStream.pipe(res);
+    if (range) {
+      // Handle range requests for video seeking
+      const parts = range.replace(/bytes=/, '').split('-');
+      const start = parseInt(parts[0], 10);
+      const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+      const chunksize = (end - start) + 1;
 
-    // Cleanup after streaming
-    fileStream.on('end', () => {
-      fs.unlink(outputPath, (err) => {
-        if (err) logger.error(`Failed to delete temp file ${outputPath}:`, err);
+      res.writeHead(206, {
+        'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+        'Accept-Ranges': 'bytes',
+        'Content-Length': chunksize,
+        'Content-Type': 'video/mp4',
+        'Content-Disposition': `inline; filename="${outputFilename}"`,
+        'Access-Control-Allow-Origin': '*',
+        'Cross-Origin-Resource-Policy': 'cross-origin',
       });
-    });
+
+      const fileStream = fs.createReadStream(outputPath, { start, end });
+      fileStream.pipe(res);
+
+      // Cleanup after streaming
+      fileStream.on('end', () => {
+        fs.unlink(outputPath, (err) => {
+          if (err) logger.error(`Failed to delete temp file ${outputPath}:`, err);
+        });
+      });
+    } else {
+      // Stream entire file
+      res.writeHead(200, {
+        'Content-Length': fileSize,
+        'Content-Type': 'video/mp4',
+        'Content-Disposition': `inline; filename="${outputFilename}"`,
+        'Accept-Ranges': 'bytes',
+        'Access-Control-Allow-Origin': '*',
+        'Cross-Origin-Resource-Policy': 'cross-origin',
+      });
+
+      const fileStream = fs.createReadStream(outputPath);
+      fileStream.pipe(res);
+
+      // Cleanup after streaming
+      fileStream.on('end', () => {
+        fs.unlink(outputPath, (err) => {
+          if (err) logger.error(`Failed to delete temp file ${outputPath}:`, err);
+        });
+      });
+    }
 
     logger.info(`Clip exported successfully: ${outputFilename}`);
   } catch (error) {
@@ -635,6 +717,8 @@ router.get('/:id/stream', apiAuth, async (req, res, next) => {
         'Accept-Ranges': 'bytes',
         'Content-Length': chunksize,
         'Content-Type': 'video/mp4',
+        'Access-Control-Allow-Origin': '*',
+        'Cross-Origin-Resource-Policy': 'cross-origin',
       });
 
       file.pipe(res);
@@ -643,6 +727,8 @@ router.get('/:id/stream', apiAuth, async (req, res, next) => {
       res.writeHead(200, {
         'Content-Length': fileSize,
         'Content-Type': 'video/mp4',
+        'Access-Control-Allow-Origin': '*',
+        'Cross-Origin-Resource-Policy': 'cross-origin',
       });
 
       fs.createReadStream(recording.filePath).pipe(res);

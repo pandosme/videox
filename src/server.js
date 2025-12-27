@@ -31,12 +31,14 @@ const app = express();
 const PORT = process.env.API_PORT || 3000;
 
 // Middleware
-app.use(helmet()); // Security headers
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" } // Allow cross-origin resource access
+})); // Security headers
 
-// CORS configuration for API service integration
+// CORS configuration - Allow all origins for external integrations
 app.use(cors({
-  origin: process.env.CORS_ORIGIN || '*', // Allow all origins by default (configurable via env)
-  credentials: true,
+  origin: '*', // Allow all origins
+  credentials: false, // Must be false when origin is '*' (browser security requirement)
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'Range'],
   exposedHeaders: ['Content-Range', 'Accept-Ranges', 'Content-Length'],
