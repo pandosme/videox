@@ -64,7 +64,6 @@ hls/
 Thumbs.db
 .DS_Store
 
-# Docker files (kept local, not in GitHub)
-Dockerfile
-docker-compose.yml
+# Docker dev files (exclude local dev setup)
+docker-compose.dev.yml
 .dockerignore

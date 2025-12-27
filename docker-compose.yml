@@ -1,0 +1,111 @@
+# =============================================================================
+# VideoX VMS - Production Docker Compose
+# =============================================================================
+# Simple production deployment - just edit the values below and run:
+#   docker-compose up -d
+#
+# MongoDB is internal only (not exposed) - no authentication needed
+# =============================================================================
+
+version: '3.8'
+
+services:
+  # MongoDB Database (internal only - not exposed to host)
+  mongodb:
+    image: mongo:7
+    container_name: videox-mongodb
+    restart: unless-stopped
+    volumes:
+      - mongodb-data:/data/db
+      - mongodb-config:/data/configdb
+    networks:
+      - videox-network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # VideoX VMS Application
+  videox:
+    image: pandosme/videox:latest  # Pulls from Docker Hub
+    container_name: videox
+    restart: unless-stopped
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    ports:
+      - "3002:3002"
+    networks:
+      - videox-network
+
+    environment:
+      # =======================================================================
+      # REQUIRED: Change these values for your deployment
+      # =======================================================================
+
+      # Admin credentials for VideoX web interface
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: change_this_password
+
+      # Security keys - MUST be changed in production!
+      # Generate JWT_SECRET (48+ chars): node -e "console.log(require('crypto').randomBytes(48).toString('base64').slice(0,48))"
+      # Generate ENCRYPTION_KEY (32 chars): node -e "console.log(require('crypto').randomBytes(32).toString('base64').slice(0,32))"
+      JWT_SECRET: CHANGE_THIS_JWT_SECRET_MIN_48_CHARS_XXXXXXXXXXXXXXX
+      ENCRYPTION_KEY: CHANGE_THIS_32_CHAR_AES_KEY_XX
+
+      # =======================================================================
+      # OPTIONAL: Customize these if needed
+      # =======================================================================
+
+      # MongoDB connection (internal - no authentication needed)
+      MONGODB_URI: mongodb://mongodb:27017/videox
+
+      # Server configuration
+      NODE_ENV: production
+      API_PORT: 3002
+      LOG_LEVEL: info
+
+      # Storage paths (inside container)
+      STORAGE_PATH: /var/lib/videox-storage
+      LOG_PATH: /var/lib/videox-storage/logs
+
+      # Recording retention (days)
+      GLOBAL_RETENTION_DAYS: 30
+
+      # Cleanup schedule (cron format: minute hour day month weekday)
+      # Default: Every 6 hours
+      CLEANUP_SCHEDULE: "0 */6 * * *"
+
+      # CORS configuration (* allows all origins)
+      CORS_ORIGIN: "*"
+
+      # Performance limits
+      MAX_CONCURRENT_STREAMS: 20
+      MAX_CONCURRENT_EXPORTS: 3
+
+    volumes:
+      # Storage for recordings, HLS streams, and logs
+      # Change the path on the left side to your desired storage location
+      # Examples:
+      #   - /mnt/storage/videox:/var/lib/videox-storage
+      #   - /data/videox:/var/lib/videox-storage
+      - ./videox-storage:/var/lib/videox-storage
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3002/api/system/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+networks:
+  videox-network:
+    driver: bridge
+
+volumes:
+  mongodb-data:
+    driver: local
+  mongodb-config:
+    driver: local
