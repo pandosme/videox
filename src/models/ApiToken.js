@@ -4,8 +4,7 @@ const crypto = require('crypto');
 const apiTokenSchema = new mongoose.Schema(
   {
     userId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
+      type: String, // Changed from ObjectId to String to support 'admin' user ID
       required: true,
     },
     name: {
