@@ -127,7 +127,13 @@ class RecordingManager {
       const ffmpegArgs = [
         '-rtsp_transport', 'tcp',
         '-i', rtspUrl,
-        '-c:v', 'copy', // Copy video codec (no re-encoding)
+        '-c:v', 'libx264', // Re-encode video to control keyframes
+        '-preset', 'ultrafast', // Fastest encoding for real-time recording
+        '-tune', 'zerolatency', // Low-latency tuning for live streaming
+        '-g', '60', // Keyframe interval: 1 keyframe every 60 frames (2 sec at 30fps)
+        '-keyint_min', '60', // Minimum keyframe interval
+        '-force_key_frames', 'expr:gte(t,n_forced*2)', // Force keyframe every 2 seconds
+        '-sc_threshold', '0', // Disable scene change detection (consistent keyframes)
         '-c:a', 'aac', // Encode audio to AAC
         '-f', 'segment',
         '-segment_time', '60', // 60-second segments

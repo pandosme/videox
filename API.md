@@ -871,7 +871,7 @@ Get all active recordings.
 
 **Stream recording by camera serial, start time, and duration (for integrators).**
 
-This endpoint provides a user-friendly way for external clients to stream recordings by camera serial number and timestamp, without needing to know MongoDB ObjectIds.
+This endpoint provides a user-friendly way for external clients to stream recordings by camera serial number and timestamp, without needing to know MongoDB ObjectIds. It supports both timestamp-based seeking (using FFmpeg) and byte-range seeking for maximum compatibility.
 
 **Authentication Methods**
 1. Authorization header: `Authorization: Bearer <token>` (JWT or API token)
@@ -880,13 +880,25 @@ This endpoint provides a user-friendly way for external clients to stream record
 **Query Parameters**
 - `cameraId` (required): Camera serial number (e.g., B8A44F3024BB)
 - `startTime` (required): Start time in epoch seconds or ISO 8601 (e.g., 1735146000)
-- `duration` (optional): Duration in seconds (not used for streaming, returns single segment)
+- `duration` (optional): Duration in seconds to stream from startTime
+- `seekMode` (optional): `'timestamp'` (default) for FFmpeg seeking, `'bytes'` for byte-range requests
 - `token` (optional): API token for authentication (alternative to Authorization header)
+
+**Seeking Modes**
+1. **Timestamp Mode** (default): Uses FFmpeg two-pass seeking for precise timestamp-based playback
+   - Fast: Input seeking to nearest keyframe (within 2 seconds)
+   - Accurate: Output seeking to exact timestamp
+   - Best for: Precise event playback, mobile apps, custom players
+
+2. **Bytes Mode**: Traditional byte-range HTTP requests
+   - Compatible with all video players
+   - Supports HTTP Range header
+   - Best for: VLC, web browsers, legacy clients
 
 **Success Response (200 OK / 206 Partial Content)**
 - Content-Type: `video/mp4`
 - Body: MP4 video data
-- Supports HTTP Range requests for video seeking
+- Supports HTTP Range requests (bytes mode) or FFmpeg streaming (timestamp mode)
 
 **Range Request Example**
 ```bash
@@ -949,13 +961,25 @@ This endpoint is designed for event-based retrieval where exact timing matters. 
 - Body: MP4 video file (exact duration as requested)
 
 **Behavior**
-1. **Single Segment Optimization**: If requested time range fits within one 60-second segment, FFmpeg trims only that segment
+1. **Single Segment Optimization**: If requested time range fits within one 60-second segment:
+   - Two-pass FFmpeg seeking for optimal performance
+   - Input seek: Fast jump to nearest keyframe (within 2 seconds)
+   - Output seek: Precise trim to exact timestamp
+   - Re-encodes video for frame accuracy
+   - Temporary files are cleaned up automatically
+
 2. **Multi-Segment Stitching**: If time range spans multiple segments:
    - Finds all overlapping segments
    - Uses FFmpeg concat demuxer to stitch them
-   - Trims to exact start time and duration
-   - Uses `-c copy` (no re-encoding, fast processing)
+   - Two-pass seeking for accurate start time
+   - Trims to exact duration
+   - Re-encodes video for frame accuracy
    - Temporary files are cleaned up automatically
+
+**Keyframe Management**
+- All recordings use forced keyframes every 2 seconds (configured at recording time)
+- This ensures precise seeking accuracy across both APIs
+- Two-pass seeking approach provides the best balance of speed and accuracy
 
 **Error Responses**
 

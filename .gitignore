@@ -60,6 +60,9 @@ hls/
 *.temp
 .cache/
 
+# Test directory
+test/
+
 # OS files
 Thumbs.db
 .DS_Store

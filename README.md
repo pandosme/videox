@@ -37,9 +37,16 @@ VideoX is **not a complete VMS** - it's a backend recording engine that:
 ## Features
 
 - **Continuous Recording**: Automatic 60-second MP4 segments organized by camera/date/time
+  - Forced keyframes every 2 seconds for precise timestamp seeking
+  - H.264 encoding with optimized parameters for recording
 - **Live Streaming**: HLS streaming with 2-second segments
 - **Recording Playback**: Browse and stream recorded segments via API
+  - Timestamp-based seeking for frame-accurate playback
+  - Dual-mode support: FFmpeg seeking or byte-range requests
 - **Export Clips**: Extract clips from recordings with FFmpeg
+  - Two-pass seeking for fast and accurate clip exports
+  - Frame-accurate trimming to exact timestamps
+  - Spans multiple segments seamlessly
 - **Retention Management**: Automatic cleanup based on configurable retention periods
 - **Storage Management**: Monitor disk usage per camera
 - **Camera Management**: Add/remove Axis cameras via VAPIX API

@@ -149,14 +149,15 @@ router.get('/periods', apiAuth, async (req, res, next) => {
  * Query parameters:
  * - cameraId: Camera serial number (required)
  * - startTime: Start time in epoch seconds or ISO 8601 (required)
- * - duration: Duration in seconds (optional, defaults to finding single segment)
+ * - duration: Duration in seconds (optional, streams from startTime to end of segment if not specified)
+ * - seekMode: 'timestamp' for FFmpeg seeking (default), 'bytes' for byte-range requests
  * - token: API token for authentication (optional)
  *
  * Example: /api/recordings/stream-by-time?cameraId=B8A44F3024BB&startTime=1766759087&duration=60&token=xxx
  */
 router.get('/stream-by-time', apiAuth, async (req, res, next) => {
   try {
-    const { cameraId, startTime, duration } = req.query;
+    const { cameraId, startTime, duration, seekMode = 'timestamp' } = req.query;
 
     if (!cameraId || !startTime) {
       return res.status(400).json({
@@ -201,6 +202,84 @@ router.get('/stream-by-time', apiAuth, async (req, res, next) => {
       });
     }
 
+    // If seekMode is 'timestamp' and we need to seek within the segment, use FFmpeg
+    const segmentStart = new Date(recording.startTime);
+    const trimStart = (start.getTime() - segmentStart.getTime()) / 1000;
+
+    if (seekMode === 'timestamp' && (trimStart > 0 || duration)) {
+      // Use FFmpeg for timestamp-based seeking
+      const { spawn } = require('child_process');
+
+      // Calculate duration
+      const segmentEnd = new Date(recording.endTime);
+      const maxDuration = (segmentEnd.getTime() - start.getTime()) / 1000;
+      const durationSec = duration ? Math.min(parseInt(duration), maxDuration) : maxDuration;
+
+      // Two-pass seeking for optimal performance and accuracy
+      const inputSeek = Math.max(0, trimStart - 2);
+      const outputSeek = trimStart - inputSeek;
+
+      const ffmpegArgs = [
+        '-ss', inputSeek.toString(),  // Fast seek to keyframe (before -i)
+        '-i', filePath,
+        '-ss', outputSeek.toString(), // Precise seek to exact frame (after -i)
+        '-t', durationSec.toString(),
+        '-c:v', 'copy',               // Copy video (no re-encoding for streaming)
+        '-c:a', 'copy',               // Copy audio
+        '-f', 'mp4',
+        '-movflags', 'frag_keyframe+empty_moov+default_base_moof', // Enable streaming
+        'pipe:1',                     // Output to stdout
+      ];
+
+      logger.info(`Streaming with FFmpeg seek: ${cameraId}, trimStart=${trimStart}s, duration=${durationSec}s`);
+      logger.debug(`FFmpeg command: ffmpeg ${ffmpegArgs.join(' ')}`);
+
+      const ffmpeg = spawn('ffmpeg', ffmpegArgs);
+
+      // Set response headers for streaming
+      res.writeHead(200, {
+        'Content-Type': 'video/mp4',
+        'Access-Control-Allow-Origin': req.headers.origin || '*',
+        'Cross-Origin-Resource-Policy': 'cross-origin',
+        'Cache-Control': 'no-cache',
+      });
+
+      // Pipe FFmpeg output to response
+      ffmpeg.stdout.pipe(res);
+
+      // Handle FFmpeg errors
+      let ffmpegStderr = '';
+      ffmpeg.stderr.on('data', (data) => {
+        ffmpegStderr += data.toString();
+      });
+
+      ffmpeg.on('error', (error) => {
+        logger.error(`FFmpeg error for ${cameraId}:`, error);
+        if (!res.headersSent) {
+          res.status(500).json({ error: 'Streaming error' });
+        }
+      });
+
+      ffmpeg.on('exit', (code) => {
+        if (code !== 0) {
+          logger.error(`FFmpeg exited with code ${code}. stderr: ${ffmpegStderr}`);
+        } else {
+          logger.debug(`FFmpeg streaming completed successfully for ${cameraId}`);
+        }
+      });
+
+      // Handle client disconnect
+      req.on('close', () => {
+        if (ffmpeg && !ffmpeg.killed) {
+          logger.debug(`Client disconnected, stopping FFmpeg for ${cameraId}`);
+          ffmpeg.kill('SIGTERM');
+        }
+      });
+
+      return;
+    }
+
+    // Default: byte-range streaming (legacy mode)
     const stat = fs.statSync(filePath);
     const fileSize = stat.size;
     const range = req.headers.range;
@@ -344,15 +423,27 @@ router.get('/export-clip', apiAuth, async (req, res, next) => {
         // Calculate trim offsets
         const trimStart = (start.getTime() - segmentStart.getTime()) / 1000;
 
-        // Use FFmpeg to trim the segment
+        // Use FFmpeg to trim the segment with two-pass seeking for optimal performance
         const { spawn } = require('child_process');
 
-        // Put -ss before -i for input seeking (more reliable with low bitrate Zipstream)
+        // Two-pass seeking approach:
+        // 1. Input seeking (-ss before -i): Fast, seeks to nearest keyframe before target
+        // 2. Output seeking (-ss after -i): Precise, trims exact timestamp
+        // This combination provides both speed and accuracy
+
+        // Seek to 2 seconds before target (safely before nearest keyframe at 2s intervals)
+        const inputSeek = Math.max(0, trimStart - 2);
+        const outputSeek = trimStart - inputSeek;
+
         const ffmpegArgs = [
-          '-ss', trimStart.toString(),
-          '-t', durationSec.toString(),
+          '-ss', inputSeek.toString(),  // Fast seek to keyframe (before -i)
           '-i', segment.filePath,
-          '-c', 'copy',
+          '-ss', outputSeek.toString(), // Precise seek to exact frame (after -i)
+          '-t', durationSec.toString(),
+          '-c:v', 'libx264',            // Re-encode video for frame accuracy
+          '-preset', 'veryfast',         // Fast encoding preset
+          '-crf', '23',                  // Quality (lower = better, 23 is good)
+          '-c:a', 'aac',                 // Re-encode audio to match video timing
           '-avoid_negative_ts', 'make_zero',
           '-y',
           outputPath,
@@ -454,14 +545,22 @@ router.get('/export-clip', apiAuth, async (req, res, next) => {
     // Use FFmpeg to concatenate and trim
     const { spawn } = require('child_process');
 
-    // Put -ss before -i for input seeking (more reliable with low bitrate Zipstream)
+    // Two-pass seeking for multi-segment concatenation:
+    // Seek to 2 seconds before target (safely before nearest keyframe)
+    const inputSeek = Math.max(0, trimStart - 2);
+    const outputSeek = trimStart - inputSeek;
+
     const ffmpegArgs = [
-      '-ss', trimStart.toString(),
-      '-t', durationSec.toString(),
+      '-ss', inputSeek.toString(),  // Fast seek to keyframe (before -i)
       '-f', 'concat',
       '-safe', '0',
       '-i', concatListPath,
-      '-c', 'copy',
+      '-ss', outputSeek.toString(), // Precise seek to exact frame (after -i)
+      '-t', durationSec.toString(),
+      '-c:v', 'libx264',            // Re-encode video for frame accuracy
+      '-preset', 'veryfast',         // Fast encoding preset
+      '-crf', '23',                  // Quality (lower = better, 23 is good)
+      '-c:a', 'aac',                 // Re-encode audio to match video timing
       '-avoid_negative_ts', 'make_zero',
       '-y',
       outputPath,
