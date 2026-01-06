@@ -38,9 +38,6 @@ services:
       - videox-network
     ports:
       - "3302:3302"
-    dns:
-      - 10.13.8.2  # Pi-hole DNS server
-      - 8.8.8.8    # Google DNS fallback
 
     environment:
       # =======================================================================
