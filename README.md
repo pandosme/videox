@@ -6,7 +6,7 @@ A local recording engine for Axis IP cameras designed for integration with vario
 
 VideoX is a **recording engine**, not a complete Video Management System (VMS). It provides:
 - Continuous recording from Axis cameras (60-second MP4 segments)
-- Built-in web interface for camera management and playback
+- Built-in web interface for camera management.  It does not have a user interface for playback.
 - RESTful API for integration with client applications
 - HLS live streaming and recording playback
 - Storage management with configurable retention
@@ -76,7 +76,7 @@ VideoX is a **recording engine**, not a complete Video Management System (VMS). 
 
 ## Integration
 
-VideoX includes a built-in web interface for managing cameras and viewing recordings. For custom integrations:
+VideoX includes a built-in web interface for managing cameras. For custom integrations to playback clients:
 
 - **API Documentation**: [API.md](./API.md) - Complete endpoint reference and authentication
 - **Architecture Guide**: [ARCHITECTURE.md](./ARCHITECTURE.md) - System design and integration patterns

@@ -1,10 +1,8 @@
 # =============================================================================
-# VideoX VMS - Production Docker Compose
+# VideoX VMS - Development Docker Compose
 # =============================================================================
-# Simple production deployment - just edit the values below and run:
-#   docker-compose up -d
-#
-# MongoDB is internal only (not exposed) - no authentication needed
+# For local development and testing - builds from source
+# Usage: docker-compose -f docker-compose.dev.yml up -d
 # =============================================================================
 
 services:
@@ -24,8 +22,11 @@ services:
       retries: 5
       start_period: 20s
 
-  # VideoX VMS Application
+  # VideoX VMS Application (built from local source)
   videox:
+    build:
+      context: .
+      dockerfile: Dockerfile
     image: pandosme/videox:latest
     container_name: videox
     restart: unless-stopped
