@@ -11,7 +11,8 @@ services:
     image: mongo:7
     container_name: videox-mongodb
     restart: unless-stopped
-    network_mode: host
+    networks:
+      - videox-network
     volumes:
       - mongodb-data:/data/db
       - mongodb-config:/data/configdb
@@ -33,7 +34,10 @@ services:
     depends_on:
       mongodb:
         condition: service_healthy
-    network_mode: host
+    networks:
+      - videox-network
+    ports:
+      - "3302:3302"
 
     environment:
       # =======================================================================
@@ -54,8 +58,8 @@ services:
       # OPTIONAL: Customize these if needed
       # =======================================================================
 
-      # MongoDB connection (using host network - connect via localhost)
-      MONGODB_URI: mongodb://localhost:27017/videox
+      # MongoDB connection (internal Docker network - use service name)
+      MONGODB_URI: mongodb://mongodb:27017/videox
 
       # Server configuration
       NODE_ENV: development
