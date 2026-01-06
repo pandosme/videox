@@ -6,14 +6,14 @@ A local recording engine for Axis IP cameras designed for integration with vario
 
 VideoX is a **recording engine**, not a complete Video Management System (VMS). It provides:
 - Continuous recording from Axis cameras (60-second MP4 segments)
+- Built-in web interface for camera management and playback
 - RESTful API for integration with client applications
 - HLS live streaming and recording playback
 - Storage management with configurable retention
 - Docker-first deployment with embedded MongoDB
 
-**VideoX is designed for integrators** - it provides the recording infrastructure while you build the client applications and integrations for your specific use case.
+**VideoX is designed for integrators** - it provides the recording infrastructure and management interface while you build custom integrations for your specific use case.
 
-**Reference client**: [videox-client](https://github.com/pandosme/videox-client) - A React-based management UI example
 
 ## Key Capabilities
 
@@ -30,87 +30,29 @@ VideoX is a **recording engine**, not a complete Video Management System (VMS). 
 
 ### Prerequisites
 
-**For Docker deployment:**
 - Docker and Docker Compose installed
-- Axis cameras on your network
-
-**For npm deployment:**
-- Node.js 20+ and npm installed
-- MongoDB server running
-- FFmpeg installed
 - Axis cameras on your network
 
 ### Installation
 
-1. **Download or clone the repository**
-
+1. **Create a directory for VideoX**
    ```bash
-   # Download latest release
-   wget https://github.com/pandosme/videox/archive/refs/heads/main.zip
-   unzip main.zip
-   cd videox-main
-
-   # Or clone with git
-   git clone https://github.com/pandosme/videox.git
+   mkdir videox
    cd videox
    ```
 
-2. **Run the interactive setup script**
-
-   ```bash
-   ./setup.sh
-   ```
-
-   The setup script will guide you through:
-   - Choosing deployment method (Docker or npm)
-   - MongoDB configuration (embedded or external)
-   - Admin credentials
-   - Storage paths
-   - Security keys generation
-   - All necessary configuration
-
-3. **Start VideoX**
-
-   The setup script will show you how to start based on your chosen deployment method:
-
-   **Docker:**
-   ```bash
-   docker-compose up -d
-   ```
-
-   **npm:**
-   ```bash
-   npm install
-   npm start
-   ```
-
-4. **Verify it's running**
-
-   ```bash
-   # Check health
-   curl http://localhost:3302/api/system/health
-
-   # For Docker, view logs
-   docker-compose logs -f videox
-   ```
-
-VideoX is now running at `http://localhost:3302` (or your configured port)
-
-### Docker Deployment (Quick)
-
-If you prefer Docker without the interactive setup:
-
-1. Download docker-compose.yml:
+2. **Download docker-compose.yml**
    ```bash
    wget https://raw.githubusercontent.com/pandosme/videox/main/docker-compose.yml
    ```
 
-2. Edit docker-compose.yml and change:
-   - ADMIN_USERNAME and ADMIN_PASSWORD
-   - SESSION_SECRET and ENCRYPTION_KEY (generate with commands below)
-   - Storage path (optional)
+3. **Edit docker-compose.yml**
 
-3. Generate security keys:
+   Update these required settings:
+   - `ADMIN_USERNAME` and `ADMIN_PASSWORD` - Your admin credentials
+   - `./videox-storage` - Change to your desired storage location
+
+   Optionally generate new security keys:
    ```bash
    # Session Secret (32+ characters)
    openssl rand -base64 48 | tr -d '\n' | cut -c1-32
@@ -119,18 +61,25 @@ If you prefer Docker without the interactive setup:
    openssl rand -base64 32 | tr -d '\n' | cut -c1-32
    ```
 
-4. Start:
+4. **Start VideoX**
    ```bash
    docker-compose up -d
    ```
 
+5. **Open web interface**
+
+   Go to `http://YOUR_IP:3302` in your browser and login with your admin credentials.
+
+6. **Add Axis cameras**
+
+   Use the web interface to add and configure your Axis cameras.
+
 ## Integration
 
-VideoX provides a RESTful API for all operations. Build your own clients or use the reference implementation:
+VideoX includes a built-in web interface for managing cameras and viewing recordings. For custom integrations:
 
 - **API Documentation**: [API.md](./API.md) - Complete endpoint reference and authentication
 - **Architecture Guide**: [ARCHITECTURE.md](./ARCHITECTURE.md) - System design and integration patterns
-- **Reference Client**: [videox-client](https://github.com/pandosme/videox-client) - Example React-based UI
 
 ## Configuration
 
@@ -293,9 +242,3 @@ Camera credentials are encrypted with AES-256. See [ARCHITECTURE.md](./ARCHITECT
 ## License
 
 MIT License - See LICENSE file for details
-
-## Related Projects
-
-- **videox-client** - Management UI for VideoX (React application)
-  - GitHub: https://github.com/pandosme/videox-client
-  - Provides camera management and video playback interface
