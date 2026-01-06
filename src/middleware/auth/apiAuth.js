@@ -1,11 +1,10 @@
-const jwt = require('jsonwebtoken');
 const ApiToken = require('../../models/ApiToken');
 const User = require('../../models/User');
 const logger = require('../../utils/logger');
 
 /**
  * API Authentication Middleware
- * Supports both JWT tokens and long-lived API tokens
+ * Authenticates external clients using API tokens only
  *
  * Methods:
  * 1. Authorization header: Authorization: Bearer <token>
@@ -36,47 +35,7 @@ const apiAuth = async (req, res, next) => {
       });
     }
 
-    // Try JWT first
-    try {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
-
-      // Handle single-user admin system (id: 'admin' from .env)
-      if (decoded.id === 'admin') {
-        req.user = {
-          id: 'admin',
-          username: decoded.username || process.env.ADMIN_USERNAME,
-          role: 'admin',
-        };
-        req.authType = 'jwt';
-        return next();
-      }
-
-      // Handle database users (multi-user system)
-      const user = await User.findById(decoded.id).select('-password');
-
-      if (!user || !user.active) {
-        return res.status(401).json({
-          error: {
-            code: 'UNAUTHORIZED',
-            message: 'User not found or inactive',
-          },
-        });
-      }
-
-      req.user = {
-        id: user._id,
-        username: user.username,
-        role: user.role,
-      };
-
-      req.authType = 'jwt';
-      return next();
-    } catch (jwtError) {
-      // JWT verification failed, try API token
-      logger.debug('JWT verification failed, trying API token');
-    }
-
-    // Try API token (don't populate yet - need to handle admin user)
+    // Look up API token
     const apiToken = await ApiToken.findOne({ token, active: true });
 
     if (!apiToken) {

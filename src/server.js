@@ -2,6 +2,8 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
+const session = require('express-session');
+const MongoStore = require('connect-mongo');
 const rateLimit = require('express-rate-limit');
 const fs = require('fs').promises;
 const path = require('path');
@@ -13,7 +15,7 @@ const { errorHandler, notFoundHandler } = require('./middleware/errorHandler/err
 const requiredEnvVars = [
   'MONGODB_URI',
   'STORAGE_PATH',
-  'JWT_SECRET',
+  'SESSION_SECRET',
   'ENCRYPTION_KEY',
   'ADMIN_USERNAME',
   'ADMIN_PASSWORD',
@@ -28,11 +30,24 @@ for (const envVar of requiredEnvVars) {
 
 // Create Express app
 const app = express();
-const PORT = process.env.API_PORT || 3000;
+const PORT = process.env.API_PORT || 3302;
 
 // Middleware
 app.use(helmet({
-  crossOriginResourcePolicy: { policy: "cross-origin" } // Allow cross-origin resource access
+  crossOriginResourcePolicy: { policy: "cross-origin" }, // Allow cross-origin resource access
+  crossOriginOpenerPolicy: false, // Disable in development to avoid trustworthiness warnings
+  hsts: false, // Disable HSTS in development (prevents forcing HTTPS)
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"], // Allow inline scripts for frontend
+      styleSrc: ["'self'", "'unsafe-inline'"], // Allow inline styles for frontend
+      imgSrc: ["'self'", "data:", "blob:"],
+      mediaSrc: ["'self'", "blob:"],
+      connectSrc: ["'self'"],
+      upgradeInsecureRequests: null, // Don't force HTTPS upgrade
+    },
+  },
 })); // Security headers
 
 // CORS configuration - Allow all origins for external integrations
@@ -40,13 +55,13 @@ app.use(helmet({
 app.use(cors({
   origin: function (origin, callback) {
     // Allow all origins by reflecting the request origin
-    // This works around browser ORB blocking for video/media files
-    callback(null, origin || '*');
+    // This is required for session cookies and works around browser ORB blocking
+    callback(null, origin || true);
   },
-  credentials: false,
+  credentials: true, // Required for session cookies to work cross-origin
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'Range'],
-  exposedHeaders: ['Content-Range', 'Accept-Ranges', 'Content-Length'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Range', 'Cookie'],
+  exposedHeaders: ['Content-Range', 'Accept-Ranges', 'Content-Length', 'Set-Cookie'],
   maxAge: 86400, // Cache preflight requests for 24 hours
 }));
 
@@ -56,6 +71,28 @@ app.use(express.urlencoded({ extended: true }));
 // Trust proxy for accurate client IP detection
 // 'loopback' trusts only localhost/127.0.0.1 (safe for local dev and Docker host mode)
 app.set('trust proxy', 'loopback');
+
+// Session middleware (uses lazy MongoDB connection via mongoUrl)
+// MongoStore will connect to MongoDB independently with its own retry logic
+app.use(session({
+  secret: process.env.SESSION_SECRET,
+  resave: false,
+  saveUninitialized: false,
+  store: MongoStore.create({
+    mongoUrl: process.env.MONGODB_URI,
+    touchAfter: 24 * 3600, // Lazy session update (once per 24 hours)
+    mongoOptions: {
+      serverSelectionTimeoutMS: 30000,
+      socketTimeoutMS: 30000,
+    },
+  }),
+  cookie: {
+    secure: process.env.NODE_ENV === 'production', // HTTPS only in production
+    httpOnly: true, // Prevent XSS attacks
+    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    sameSite: 'lax', // CSRF protection
+  },
+}));
 
 // Rate limiting
 const limiter = rateLimit({
@@ -114,6 +151,22 @@ app.use('/api/export', require('./routes/export'));
 // Serve HLS streams
 const hlsStreamManager = require('./services/stream/hlsStreamManager');
 app.use('/hls', express.static(path.join(process.env.STORAGE_PATH || '/tmp', 'hls')));
+
+// Serve frontend static files
+const frontendPath = path.join(__dirname, '..', 'frontend', 'dist');
+app.use(express.static(frontendPath));
+
+// Catch-all route for frontend (SPA routing)
+// Must be after API routes but before 404 handler
+app.get('*', (req, res, next) => {
+  // Skip if this is an API route
+  if (req.path.startsWith('/api/') || req.path.startsWith('/hls/')) {
+    return next();
+  }
+
+  // Serve index.html for all other routes (SPA)
+  res.sendFile(path.join(frontendPath, 'index.html'));
+});
 
 // Recording and retention managers
 const recordingManager = require('./services/recording/recordingManager');
@@ -239,28 +292,28 @@ async function startup() {
 
     logger.info('Database connected successfully');
 
-    // 1.5. Check for configured storage path
+    // 2. Check for configured storage path
     await checkStoragePathConfig();
 
-    // 2. Initialize storage
+    // 3. Initialize storage
     await initializeStorage();
 
-    // 3. Initialize HLS stream manager
+    // 4. Initialize HLS stream manager
     await hlsStreamManager.initialize();
     logger.info('HLS stream manager initialized');
 
-    // 4. Initialize recording manager
+    // 5. Initialize recording manager
     await recordingManager.initialize();
     logger.info('Recording manager initialized');
 
-    // 5. Initialize retention manager
+    // 6. Initialize retention manager
     await retentionManager.initialize();
     logger.info('Retention manager initialized');
 
-    // 6. Start health monitoring
+    // 7. Start health monitoring
     databaseManager.startHealthMonitoring();
 
-    // 7. Start API server
+    // 8. Start API server
     const server = app.listen(PORT, '0.0.0.0', () => {
       logger.info(`VideoX API server listening on 0.0.0.0:${PORT}`);
       logger.info('Service status: running');

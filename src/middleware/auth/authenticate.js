@@ -1,54 +1,33 @@
-const { verifyToken } = require('../../utils/jwt');
 const logger = require('../../utils/logger');
 
 /**
- * Middleware to authenticate requests using JWT
- * Verifies the JWT token and attaches user info to request
+ * Middleware to authenticate requests using session
+ * Verifies the session and attaches user info to request
  */
 const authenticate = (req, res, next) => {
   try {
-    // Get token from Authorization header
-    const authHeader = req.headers.authorization;
-
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    // Check if session exists and has user
+    if (!req.session || !req.session.user) {
       return res.status(401).json({
         error: {
-          code: 'AUTH_TOKEN_MISSING',
-          message: 'Authorization token is required',
+          code: 'AUTH_SESSION_MISSING',
+          message: 'Authentication required',
         },
       });
     }
 
-    // Extract token
-    const token = authHeader.substring(7); // Remove 'Bearer ' prefix
-
-    // Verify token
-    const decoded = verifyToken(token);
-
     // Attach user info to request
-    req.user = {
-      id: decoded.id,
-      username: decoded.username,
-      role: decoded.role,
-    };
+    req.user = req.session.user;
+    req.authType = 'session';
 
     next();
   } catch (error) {
     logger.warn('Authentication failed:', error.message);
 
-    if (error.message === 'Token expired') {
-      return res.status(401).json({
-        error: {
-          code: 'AUTH_TOKEN_EXPIRED',
-          message: 'Token has expired',
-        },
-      });
-    }
-
     return res.status(401).json({
       error: {
-        code: 'AUTH_INVALID_TOKEN',
-        message: 'Invalid authentication token',
+        code: 'AUTH_FAILED',
+        message: 'Authentication failed',
       },
     });
   }

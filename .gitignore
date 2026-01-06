@@ -63,6 +63,11 @@ hls/
 # Test directory
 test/
 
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.git/
+
 # OS files
 Thumbs.db
 .DS_Store

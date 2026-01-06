@@ -8,7 +8,7 @@ VideoX is **not a complete VMS** - it's a backend recording engine that:
 - Records continuously from Axis cameras (60-second MP4 segments)
 - Provides RESTful API for live streaming, playback, and exports
 - Manages storage with configurable retention policies
-- Runs as a Docker container with embedded MongoDB
+- Runs as Docker container or with npm/Node.js
 
 **VideoX does not include a UI** - you need a separate client application to manage cameras and view recordings. Install [videox-client](https://github.com/pandosme/videox-client) to manage one or more server instances.
 
@@ -25,7 +25,7 @@ VideoX is **not a complete VMS** - it's a backend recording engine that:
 │     VideoX      │  ← This repository (recording engine)
 │  Recording API  │
 ├─────────────────┤
-│    MongoDB      │  (embedded in container)
+│    MongoDB      │  (embedded or external)
 └────────┬────────┘
          │ VAPIX/RTSP
          ↓
@@ -50,75 +50,106 @@ VideoX is **not a complete VMS** - it's a backend recording engine that:
 - **Retention Management**: Automatic cleanup based on configurable retention periods
 - **Storage Management**: Monitor disk usage per camera
 - **Camera Management**: Add/remove Axis cameras via VAPIX API
-- **Authentication**: JWT-based API authentication with admin credentials
+- **Authentication**: Session-based authentication for web UI, API keys for external clients
 - **Axis Zipstream Support**: Optimized for Axis compressed streams
 
-## Quick Start (Docker)
+## Quick Start
 
 ### Prerequisites
 
+**For Docker deployment:**
 - Docker and Docker Compose installed
 - Axis cameras on your network
-- Storage volume for recordings
 
-### 1. Download docker-compose.yml
+**For npm deployment:**
+- Node.js 20+ and npm installed
+- MongoDB server running
+- FFmpeg installed
+- Axis cameras on your network
 
-```bash
-mkdir videox && cd videox
-wget https://raw.githubusercontent.com/pandosme/videox/main/docker-compose.yml
-```
+### Installation
 
-### 2. Edit Configuration
+1. **Download or clone the repository**
 
-Open `docker-compose.yml` and change:
+   ```bash
+   # Download latest release
+   wget https://github.com/pandosme/videox/archive/refs/heads/main.zip
+   unzip main.zip
+   cd videox-main
 
-```yaml
-environment:
-  # REQUIRED: Change these values
-  ADMIN_USERNAME: admin
-  ADMIN_PASSWORD: your_secure_password
-  JWT_SECRET: your_48_char_jwt_secret
-  ENCRYPTION_KEY: your_32_char_encryption_key
-```
+   # Or clone with git
+   git clone https://github.com/pandosme/videox.git
+   cd videox
+   ```
 
-Generate security keys:
-```bash
-# JWT Secret (48+ characters)
-node -e "console.log(require('crypto').randomBytes(48).toString('base64').slice(0,48))"
+2. **Run the interactive setup script**
 
-# Encryption Key (exactly 32 characters)
-node -e "console.log(require('crypto').randomBytes(32).toString('base64').slice(0,32))"
-```
+   ```bash
+   ./setup.sh
+   ```
 
-### 3. Configure Storage
+   The setup script will guide you through:
+   - Choosing deployment method (Docker or npm)
+   - MongoDB configuration (embedded or external)
+   - Admin credentials
+   - Storage paths
+   - Security keys generation
+   - All necessary configuration
 
-By default, recordings are stored in `./videox-storage`. For production, change to a dedicated volume:
+3. **Start VideoX**
 
-```yaml
-volumes:
-  - /mnt/storage/videox:/var/lib/videox-storage  # Change to your path
-```
+   The setup script will show you how to start based on your chosen deployment method:
 
-### 4. Start VideoX
+   **Docker:**
+   ```bash
+   docker-compose up -d
+   ```
 
-```bash
-docker-compose up -d
-```
+   **npm:**
+   ```bash
+   npm install
+   npm start
+   ```
 
-### 5. Verify Running
+4. **Verify it's running**
 
-```bash
-# Check status
-docker-compose ps
+   ```bash
+   # Check health
+   curl http://localhost:3302/api/system/health
 
-# Check health
-curl http://localhost:3002/api/system/health
+   # For Docker, view logs
+   docker-compose logs -f videox
+   ```
 
-# View logs
-docker-compose logs -f videox
-```
+VideoX is now running at `http://localhost:3302` (or your configured port)
 
-VideoX is now running at `http://your-server:3002`
+### Docker Deployment (Quick)
+
+If you prefer Docker without the interactive setup:
+
+1. Download docker-compose.yml:
+   ```bash
+   wget https://raw.githubusercontent.com/pandosme/videox/main/docker-compose.yml
+   ```
+
+2. Edit docker-compose.yml and change:
+   - ADMIN_USERNAME and ADMIN_PASSWORD
+   - SESSION_SECRET and ENCRYPTION_KEY (generate with commands below)
+   - Storage path (optional)
+
+3. Generate security keys:
+   ```bash
+   # Session Secret (32+ characters)
+   openssl rand -base64 48 | tr -d '\n' | cut -c1-32
+
+   # Encryption Key (32 characters)
+   openssl rand -base64 32 | tr -d '\n' | cut -c1-32
+   ```
+
+4. Start:
+   ```bash
+   docker-compose up -d
+   ```
 
 ## Management UI
 
@@ -133,7 +164,7 @@ npm run dev
 
 Configure the client to point to your VideoX server in `.env`:
 ```
-VITE_API_URL=http://your-server:3002/api
+VITE_API_URL=http://your-server:3302/api
 ```
 
 The client provides:
@@ -146,18 +177,25 @@ The client provides:
 
 ## API Overview
 
-VideoX provides a RESTful API for client applications. All endpoints require JWT authentication except `/api/system/health` and `/api/auth/login`.
+VideoX provides a RESTful API for client applications. All endpoints require authentication except `/api/system/health`.
 
 ### Authentication
 
+**Web UI / Browser Clients:**
+Session-based authentication using HTTP-only cookies:
+
 ```bash
-# Login
-curl -X POST http://localhost:3002/api/auth/login \
+# Login (creates session cookie)
+curl -c cookies.txt -X POST http://localhost:3302/api/auth/login \
   -H "Content-Type: application/json" \
   -d '{"username":"admin","password":"your_password"}'
+
+# Use session cookie for subsequent requests
+curl -b cookies.txt http://localhost:3302/api/cameras
 ```
 
-Returns JWT access token for API requests.
+**External API Clients:**
+Use API tokens for programmatic access. Generate tokens via the web UI or API.
 
 ### Key Endpoints
 
@@ -179,27 +217,13 @@ For complete API documentation, see [API.md](./API.md).
 
 ## Configuration
 
-All configuration is in `docker-compose.yml`:
+Configuration is stored in `.env` file (generated by setup.sh):
 
 ### Recording Settings
 
-```yaml
-GLOBAL_RETENTION_DAYS: 30           # Keep recordings for 30 days
-CLEANUP_SCHEDULE: "0 */6 * * *"     # Run cleanup every 6 hours
-```
-
-### Performance Limits
-
-```yaml
-MAX_CONCURRENT_STREAMS: 20          # Max simultaneous HLS streams
-MAX_CONCURRENT_EXPORTS: 3           # Max simultaneous clip exports
-```
-
-### Network Settings
-
-```yaml
-CORS_ORIGIN: "*"                    # Allow all origins (restrict in production)
-LOG_LEVEL: info                     # Logging level (debug, info, warn, error)
+```bash
+GLOBAL_RETENTION_DAYS=30           # Keep recordings for 30 days
+CLEANUP_SCHEDULE="0 */6 * * *"     # Run cleanup every 6 hours
 ```
 
 ### Storage Structure
@@ -219,28 +243,36 @@ Recordings are organized as:
 └── tmp/              # Temporary export files
 ```
 
-## Camera Requirements
-
-- **Brand**: Axis Communications cameras only (uses VAPIX API)
-- **Protocols**: HTTP (VAPIX), RTSP (streaming)
-- **Credentials**: Username and password for camera access
-- **Network**: Cameras must be accessible from VideoX server
-- **Compatibility**: Works with all Axis cameras supporting VAPIX 3.0+
-- **Zipstream**: Fully compatible with Axis Zipstream compression
-
-## Updating
+### Performance Limits
 
 ```bash
-# Pull latest image
-docker-compose pull
+MAX_CONCURRENT_STREAMS=20          # Max simultaneous HLS streams
+MAX_CONCURRENT_EXPORTS=3           # Max simultaneous clip exports
+```
 
-# Restart with new image
+## Docker Management
+
+```bash
+# Start
+docker-compose up -d
+
+# Stop
+docker-compose down
+
+# View logs
+docker-compose logs -f videox
+
+# Restart
+docker-compose restart
+
+# Update to latest version
+docker-compose pull
 docker-compose up -d
 ```
 
 ## Backup
 
-### Backup MongoDB
+### Backup MongoDB (Docker with embedded MongoDB)
 
 ```bash
 docker exec videox-mongodb mongodump --out /dump
@@ -250,36 +282,34 @@ docker cp videox-mongodb:/dump ./mongodb-backup-$(date +%Y%m%d)
 ### Backup Recordings
 
 ```bash
-# Backup to external storage
-tar czf recordings-backup.tar.gz /mnt/storage/videox/recordings
+tar czf recordings-backup-$(date +%Y%m%d).tar.gz /path/to/videox-storage/recordings
 ```
 
 ## Monitoring
 
-### View Logs
+### Check Health
 
 ```bash
-# All services
-docker-compose logs -f
-
-# VideoX only
-docker-compose logs -f videox
-
-# Last 100 lines
-docker-compose logs --tail=100 videox
+curl http://localhost:3302/api/system/health
 ```
 
 ### Check Storage
 
 ```bash
-curl http://localhost:3002/api/storage/stats \
-  -H "Authorization: Bearer YOUR_TOKEN"
+curl -b cookies.txt http://localhost:3302/api/storage/stats
 ```
 
-### Check Health
+### View Logs
 
+**Docker:**
 ```bash
-curl http://localhost:3002/api/system/health
+docker-compose logs -f videox
+```
+
+**npm:**
+```bash
+# Check configured log path in .env
+tail -f /var/log/videox/videox.log
 ```
 
 ## Troubleshooting
@@ -290,28 +320,33 @@ curl http://localhost:3002/api/system/health
 # Check logs
 docker-compose logs videox
 
-# Check disk space
-df -h
-
 # Verify configuration
 docker-compose config
+
+# Check disk space
+df -h
 ```
 
 ### Can't Access API
 
 ```bash
-# Check if port is open
-curl http://localhost:3002/api/system/health
+# Check if service is running
+docker-compose ps    # For Docker
+ps aux | grep node   # For npm
+
+# Test health endpoint
+curl http://localhost:3302/api/system/health
 
 # Check from another machine
-curl http://server-ip:3002/api/system/health
+curl http://server-ip:3302/api/system/health
 ```
 
 ### Recording Not Starting
 
 ```bash
 # Check logs for FFmpeg errors
-docker-compose logs videox | grep -i ffmpeg
+docker-compose logs videox | grep -i ffmpeg   # Docker
+tail -f /var/log/videox/videox.log | grep -i ffmpeg   # npm
 
 # Verify camera is accessible
 ping camera-ip
@@ -320,17 +355,31 @@ ping camera-ip
 ffmpeg -rtsp_transport tcp -i rtsp://user:pass@camera:554/axis-media/media.amp -t 5 test.mp4
 ```
 
-### Exports Not Playing
+### MongoDB Connection Issues
 
-This is usually due to Zipstream's variable bitrate. VideoX uses FFmpeg input seeking which handles this correctly. If exports still fail:
-
+**For npm deployment:**
 ```bash
-# Check FFmpeg logs
-docker-compose logs videox | grep -i "export-clip"
+# Verify MongoDB is running
+sudo systemctl status mongod
 
-# Verify source recording exists
-docker exec videox ls -la /var/lib/videox-storage/recordings/
+# Test connection
+mongosh mongodb://localhost:27017/videox
 ```
+
+**For Docker with external MongoDB:**
+```bash
+# Test connection from container
+docker-compose exec videox sh -c "wget -qO- mongodb-host:27017"
+```
+
+## Camera Requirements
+
+- **Brand**: Axis Communications cameras only (uses VAPIX API)
+- **Protocols**: HTTP (VAPIX), RTSP (streaming)
+- **Credentials**: Username and password for camera access
+- **Network**: Cameras must be accessible from VideoX server
+- **Compatibility**: Works with all Axis cameras supporting VAPIX 3.0+
+- **Zipstream**: Fully compatible with Axis Zipstream compression
 
 ## System Requirements
 
@@ -345,9 +394,10 @@ docker exec videox ls -la /var/lib/videox-storage/recordings/
 - Do NOT expose directly to the internet
 - Use a reverse proxy with SSL/TLS if internet access is needed
 - Change default admin credentials immediately
-- Restrict CORS_ORIGIN in production
+- Set `NODE_ENV=production` for production deployments (enables secure cookies)
 - Camera credentials are encrypted with AES-256
-- API uses JWT authentication with 15-minute token expiry
+- Web UI uses session-based authentication with HTTP-only cookies
+- API tokens available for external integrations
 
 ## Technology Stack
 
@@ -355,13 +405,17 @@ docker exec videox ls -la /var/lib/videox-storage/recordings/
 - **Express.js** - API framework
 - **MongoDB 7** - Camera and recording metadata
 - **FFmpeg** - Video processing (recording & streaming)
-- **Docker** - Container runtime
+- **Docker** - Container runtime (optional)
+
+## Documentation
+
+- **API Documentation**: [API.md](./API.md) - Complete REST API reference
+- **Architecture**: [ARCHITECTURE.md](./ARCHITECTURE.md) - System design and components
+- **Changelog**: [CHANGELOG.md](./CHANGELOG.md) - Version history
 
 ## Support
 
 - **Issues**: https://github.com/pandosme/videox/issues
-- **Deployment Guide**: [DEPLOYMENT.md](./DEPLOYMENT.md)
-- **API Documentation**: [API.md](./API.md)
 - **Docker Hub**: https://hub.docker.com/r/pandosme/videox
 
 ## License

@@ -2,56 +2,59 @@
 
 ## Base URL
 
-**Important**: External clients and integrations connect directly to the backend API server on port 3002, not the frontend UI (port 5174).
-
 ```
-Development: http://localhost:3002/api
-Production: http://your-server:3002/api
+Development: http://localhost:3302/api
+Production: http://your-server:3302/api
 ```
 
-**Architecture**:
-- **Backend API** (Port 3002): RESTful API for all client integrations
-  - Mobile applications
-  - Third-party integrations
-  - Automation scripts
-  - External video players
-
-- **Frontend UI** (Port 5174): Web-based user interface (development only)
-  - For human users via web browser
-  - Proxies API requests to port 3002
-  - Not intended for external client integration
+**Note**: VideoX now uses a single integrated deployment where both the web UI and API are served from the same port (3302).
 
 ## Authentication
 
-All API endpoints (except `/auth/login` and `/system/health`) require authentication.
+All API endpoints (except `/auth/login`, `/auth/session`, and `/system/health`) require authentication.
 
 VideoX supports two authentication methods:
 
-1. **JWT Tokens** - Short-lived tokens for user sessions (15-minute expiration)
-2. **API Tokens** - Long-lived tokens for external integrations and automation
+### 1. Session-Based Authentication (Web UI / Browser Clients)
 
-### Request Headers
+- **HTTP-only cookies**: Secure session cookies automatically managed by the browser
+- **7-day expiration**: Sessions expire after 7 days of inactivity
+- **Best for**: Web browsers, browser-based applications
+- Login creates a session stored in MongoDB
+- Cookies automatically sent with each request
 
+**Example**:
+```bash
+# Login (creates session cookie)
+curl -c cookies.txt -X POST http://localhost:3302/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"your_password"}'
+
+# Subsequent requests automatically include session cookie
+curl -b cookies.txt http://localhost:3302/api/cameras
 ```
-Authorization: Bearer <token>
+
+### 2. API Token Authentication (External Clients)
+
+- **Bearer tokens**: Long-lived authentication tokens
+- **Configurable expiration**: Set custom expiration or never expire
+- **Best for**: External integrations, automation scripts, third-party applications
+- Created by admin users via web UI or API
+- Token value shown only once upon creation
+
+**Request Headers**:
+```
+Authorization: Bearer <api-token>
 Content-Type: application/json
 ```
 
-### JWT Token Management
+**Example**:
+```bash
+curl http://localhost:3302/api/cameras \
+  -H "Authorization: Bearer your-api-token-here"
+```
 
-- **Access Token**: 15-minute expiration, used for all API requests
-- **Refresh Token**: 7-day expiration, used to obtain new access tokens
-- Store both tokens securely (localStorage in browser, keychain in mobile)
-- Best for: Web UI, mobile apps, user sessions
-
-### API Token Management
-
-- **API Tokens**: Long-lived bearer tokens (configurable expiration or never)
-- Created by users in the Settings UI
-- Each token has a name, optional expiration date, and can be enabled/disabled
-- Token value is only shown once upon creation
-- Best for: External integrations, automation scripts, third-party applications
-- See [API Token Endpoints](#api-token-endpoints) for management
+See [API Token Endpoints](#api-token-endpoints) for token management.
 
 ## Error Responses
 
@@ -104,23 +107,51 @@ All errors follow this format:
 
 ### POST /auth/login
 
-Authenticate user and obtain access token.
+Authenticate user and create session.
 
 **Request Body**
 ```json
 {
   "username": "admin",
-  "password": "admin123"
+  "password": "your_password"
 }
 ```
 
 **Success Response (200 OK)**
 ```json
 {
-  "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
   "user": {
-    "id": "507f1f77bcf86cd799439011",
+    "id": "admin",
+    "username": "admin",
+    "role": "admin"
+  }
+}
+```
+
+**Response Headers**:
+- `Set-Cookie: connect.sid=...` - Session cookie (HTTP-only, 7-day expiration)
+
+**Error Response (401 Unauthorized)**
+```json
+{
+  "error": {
+    "code": "AUTH_INVALID_CREDENTIALS",
+    "message": "Invalid username or password"
+  }
+}
+```
+
+---
+
+### GET /auth/session
+
+Get current session information.
+
+**Success Response (200 OK)**
+```json
+{
+  "user": {
+    "id": "admin",
     "username": "admin",
     "role": "admin"
   }
@@ -131,30 +162,9 @@ Authenticate user and obtain access token.
 ```json
 {
   "error": {
-    "code": "INVALID_CREDENTIALS",
-    "message": "Invalid username or password"
+    "code": "NOT_AUTHENTICATED",
+    "message": "No active session"
   }
-}
-```
-
----
-
-### POST /auth/refresh
-
-Refresh access token using refresh token.
-
-**Request Body**
-```json
-{
-  "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-}
-```
-
-**Success Response (200 OK)**
-```json
-{
-  "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
 }
 ```
 
@@ -162,17 +172,12 @@ Refresh access token using refresh token.
 
 ### POST /auth/logout
 
-Logout user (invalidates refresh token).
-
-**Request Headers**
-```
-Authorization: Bearer <access_token>
-```
+Logout user and destroy session.
 
 **Success Response (200 OK)**
 ```json
 {
-  "success": true
+  "message": "Logged out successfully"
 }
 ```
 

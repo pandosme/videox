@@ -7,19 +7,16 @@
 # MongoDB is internal only (not exposed) - no authentication needed
 # =============================================================================
 
-version: '3.8'
-
 services:
   # MongoDB Database (internal only - not exposed to host)
   mongodb:
     image: mongo:7
     container_name: videox-mongodb
     restart: unless-stopped
+    network_mode: host
     volumes:
       - mongodb-data:/data/db
       - mongodb-config:/data/configdb
-    networks:
-      - videox-network
     healthcheck:
       test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
       interval: 10s
@@ -29,16 +26,16 @@ services:
 
   # VideoX VMS Application
   videox:
-    image: pandosme/videox:latest  # Pulls from Docker Hub
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: pandosme/videox:latest
     container_name: videox
     restart: unless-stopped
     depends_on:
       mongodb:
         condition: service_healthy
-    ports:
-      - "3002:3002"
-    networks:
-      - videox-network
+    network_mode: host
 
     environment:
       # =======================================================================
@@ -50,21 +47,21 @@ services:
       ADMIN_PASSWORD: change_this_password
 
       # Security keys - MUST be changed in production!
-      # Generate JWT_SECRET (48+ chars): node -e "console.log(require('crypto').randomBytes(48).toString('base64').slice(0,48))"
+      # Generate SESSION_SECRET (32+ chars): node -e "console.log(require('crypto').randomBytes(32).toString('base64').slice(0,32))"
       # Generate ENCRYPTION_KEY (32 chars): node -e "console.log(require('crypto').randomBytes(32).toString('base64').slice(0,32))"
-      JWT_SECRET: CHANGE_THIS_JWT_SECRET_MIN_48_CHARS_XXXXXXXXXXXXXXX
-      ENCRYPTION_KEY: CHANGE_THIS_32_CHAR_AES_KEY_XX
+      SESSION_SECRET: AZBTk8yzaAL1RtCazbLda8I1uHifbJtv
+      ENCRYPTION_KEY: GvOzscDFhRaXAOo2OgpbASRM3YZM80ly
 
       # =======================================================================
       # OPTIONAL: Customize these if needed
       # =======================================================================
 
-      # MongoDB connection (internal - no authentication needed)
-      MONGODB_URI: mongodb://mongodb:27017/videox
+      # MongoDB connection (using host network - connect via localhost)
+      MONGODB_URI: mongodb://localhost:27017/videox
 
       # Server configuration
-      NODE_ENV: production
-      API_PORT: 3002
+      NODE_ENV: development
+      API_PORT: 3302
       LOG_LEVEL: info
 
       # Storage paths (inside container)
@@ -91,18 +88,21 @@ services:
       - ./videox-storage:/var/lib/videox-storage
 
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3002/api/system/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:3302/api/system/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
-
-networks:
-  videox-network:
-    driver: bridge
 
 volumes:
   mongodb-data:
     driver: local
   mongodb-config:
     driver: local
+
+networks:
+  videox-network:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.enable_icc: "true"
+      com.docker.network.bridge.enable_ip_masquerade: "true"
