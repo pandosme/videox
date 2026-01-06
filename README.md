@@ -1,57 +1,30 @@
 # VideoX - Axis Camera Recording Engine
 
-A lightweight recording engine for Axis IP cameras that provides continuous recording with a RESTful API for client applications.
+A local recording engine for Axis IP cameras designed for integration with various systems and clients.
 
 ## What is VideoX?
 
-VideoX is **not a complete VMS** - it's a backend recording engine that:
-- Records continuously from Axis cameras (60-second MP4 segments)
-- Provides RESTful API for live streaming, playback, and exports
-- Manages storage with configurable retention policies
-- Runs as Docker container or with npm/Node.js
+VideoX is a **recording engine**, not a complete Video Management System (VMS). It provides:
+- Continuous recording from Axis cameras (60-second MP4 segments)
+- RESTful API for integration with client applications
+- HLS live streaming and recording playback
+- Storage management with configurable retention
+- Docker-first deployment with embedded MongoDB
 
-**VideoX does not include a UI** - you need a separate client application to manage cameras and view recordings. Install [videox-client](https://github.com/pandosme/videox-client) to manage one or more server instances.
+**VideoX is designed for integrators** - it provides the recording infrastructure while you build the client applications and integrations for your specific use case.
 
-## Architecture
+**Reference client**: [videox-client](https://github.com/pandosme/videox-client) - A React-based management UI example
 
-```
-┌─────────────────┐
-│  videox-client  │  ← Separate repository (management UI)
-│   (React App)   │
-└────────┬────────┘
-         │ HTTP/REST API
-         ↓
-┌─────────────────┐
-│     VideoX      │  ← This repository (recording engine)
-│  Recording API  │
-├─────────────────┤
-│    MongoDB      │  (embedded or external)
-└────────┬────────┘
-         │ VAPIX/RTSP
-         ↓
-┌─────────────────┐
-│  Axis Cameras   │
-└─────────────────┘
-```
+## Key Capabilities
 
-## Features
-
-- **Continuous Recording**: Automatic 60-second MP4 segments organized by camera/date/time
-  - Forced keyframes every 2 seconds for precise timestamp seeking
-  - H.264 encoding with optimized parameters for recording
-- **Live Streaming**: HLS streaming with 2-second segments
-- **Recording Playback**: Browse and stream recorded segments via API
-  - Timestamp-based seeking for frame-accurate playback
-  - Dual-mode support: FFmpeg seeking or byte-range requests
-- **Export Clips**: Extract clips from recordings with FFmpeg
-  - Two-pass seeking for fast and accurate clip exports
-  - Frame-accurate trimming to exact timestamps
-  - Spans multiple segments seamlessly
-- **Retention Management**: Automatic cleanup based on configurable retention periods
-- **Storage Management**: Monitor disk usage per camera
-- **Camera Management**: Add/remove Axis cameras via VAPIX API
-- **Authentication**: Session-based authentication for web UI, API keys for external clients
-- **Axis Zipstream Support**: Optimized for Axis compressed streams
+- **Continuous Recording**: 60-second MP4 segments with forced keyframes for precise seeking
+- **Live Streaming**: HLS streams for real-time viewing
+- **Recording Playback**: Timestamp-based playback with frame-accurate seeking
+- **Export Clips**: Extract video clips spanning multiple recording segments
+- **Retention Management**: Automatic cleanup with configurable retention periods
+- **RESTful API**: Complete API for camera management, streaming, and playback
+- **Dual Authentication**: Sessions for web clients, API keys for integrations
+- **Axis Zipstream**: Full support for Axis compression technology
 
 ## Quick Start
 
@@ -151,104 +124,42 @@ If you prefer Docker without the interactive setup:
    docker-compose up -d
    ```
 
-## Management UI
+## Integration
 
-VideoX does not include a user interface. To manage cameras and view recordings, you need the **videox-client**:
+VideoX provides a RESTful API for all operations. Build your own clients or use the reference implementation:
 
-```bash
-git clone https://github.com/pandosme/videox-client.git
-cd videox-client
-npm install
-npm run dev
-```
-
-Configure the client to point to your VideoX server in `.env`:
-```
-VITE_API_URL=http://your-server:3302/api
-```
-
-The client provides:
-- Camera management (add/remove/configure)
-- Live view (2x2 grid)
-- Recording browser and playback
-- Export clip generation
-- Storage statistics
-- System monitoring
-
-## API Overview
-
-VideoX provides a RESTful API for client applications. All endpoints require authentication except `/api/system/health`.
-
-### Authentication
-
-**Web UI / Browser Clients:**
-Session-based authentication using HTTP-only cookies:
-
-```bash
-# Login (creates session cookie)
-curl -c cookies.txt -X POST http://localhost:3302/api/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"your_password"}'
-
-# Use session cookie for subsequent requests
-curl -b cookies.txt http://localhost:3302/api/cameras
-```
-
-**External API Clients:**
-Use API tokens for programmatic access. Generate tokens via the web UI or API.
-
-### Key Endpoints
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/auth/login` | POST | Authenticate and get JWT token |
-| `/api/cameras` | GET | List all cameras |
-| `/api/cameras` | POST | Add new camera |
-| `/api/cameras/:id/recording/start` | POST | Start continuous recording |
-| `/api/cameras/:id/recording/stop` | POST | Stop recording |
-| `/api/recordings` | GET | List recordings (query by camera, date range) |
-| `/api/recordings/export-clip` | GET | Export video clip |
-| `/api/live/:cameraId/start` | GET | Start HLS live stream |
-| `/api/live/:cameraId/stop` | POST | Stop live stream |
-| `/api/storage/stats` | GET | Get storage statistics |
-| `/api/system/health` | GET | Health check |
-
-For complete API documentation, see [API.md](./API.md).
+- **API Documentation**: [API.md](./API.md) - Complete endpoint reference and authentication
+- **Architecture Guide**: [ARCHITECTURE.md](./ARCHITECTURE.md) - System design and integration patterns
+- **Reference Client**: [videox-client](https://github.com/pandosme/videox-client) - Example React-based UI
 
 ## Configuration
 
-Configuration is stored in `.env` file (generated by setup.sh):
+### Essential Settings
 
-### Recording Settings
+Edit `docker-compose.yml` or `.env` file:
 
 ```bash
+# Admin credentials
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=change_this_password
+
+# Security keys (generate with: openssl rand -base64 32 | cut -c1-32)
+SESSION_SECRET=your_session_secret_here
+ENCRYPTION_KEY=your_encryption_key_here
+
+# Recording retention
 GLOBAL_RETENTION_DAYS=30           # Keep recordings for 30 days
-CLEANUP_SCHEDULE="0 */6 * * *"     # Run cleanup every 6 hours
-```
+CLEANUP_SCHEDULE="0 */6 * * *"     # Cleanup schedule (cron format)
 
-### Storage Structure
+# Storage path
+STORAGE_PATH=/var/lib/videox-storage
 
-Recordings are organized as:
-```
-/var/lib/videox-storage/
-├── recordings/
-│   └── {cameraId}/
-│       └── {YYYY}/
-│           └── {MM}/
-│               └── {DD}/
-│                   └── {HH}/
-│                       └── {cameraId}_segment_{timestamp}.mp4
-├── hls/              # Live stream segments (temporary)
-├── logs/             # Application logs
-└── tmp/              # Temporary export files
-```
-
-### Performance Limits
-
-```bash
+# Performance limits
 MAX_CONCURRENT_STREAMS=20          # Max simultaneous HLS streams
-MAX_CONCURRENT_EXPORTS=3           # Max simultaneous clip exports
+MAX_CONCURRENT_EXPORTS=3           # Max simultaneous exports
 ```
+
+For production deployment with HTTPS and reverse proxy, see [ARCHITECTURE.md](./ARCHITECTURE.md).
 
 ## Docker Management
 
@@ -287,90 +198,50 @@ tar czf recordings-backup-$(date +%Y%m%d).tar.gz /path/to/videox-storage/recordi
 
 ## Monitoring
 
-### Check Health
-
 ```bash
+# Check health status
 curl http://localhost:3302/api/system/health
-```
 
-### Check Storage
-
-```bash
-curl -b cookies.txt http://localhost:3302/api/storage/stats
-```
-
-### View Logs
-
-**Docker:**
-```bash
+# View logs (Docker)
 docker-compose logs -f videox
-```
 
-**npm:**
-```bash
-# Check configured log path in .env
-tail -f /var/log/videox/videox.log
+# View logs (npm)
+tail -f /var/lib/videox-storage/logs/videox.log
+
+# Check container status
+docker-compose ps
 ```
 
 ## Troubleshooting
 
-### Container Won't Start
+### Common Issues
 
+**Container won't start:**
 ```bash
-# Check logs
-docker-compose logs videox
-
-# Verify configuration
-docker-compose config
-
-# Check disk space
-df -h
+docker-compose logs videox          # Check error logs
+docker-compose config               # Verify configuration
+df -h                               # Check disk space
 ```
 
-### Can't Access API
-
+**Can't access API:**
 ```bash
-# Check if service is running
-docker-compose ps    # For Docker
-ps aux | grep node   # For npm
-
-# Test health endpoint
-curl http://localhost:3302/api/system/health
-
-# Check from another machine
-curl http://server-ip:3302/api/system/health
+docker-compose ps                   # Verify container is running
+curl http://localhost:3302/api/system/health  # Test endpoint
 ```
 
-### Recording Not Starting
-
+**Recording not starting:**
 ```bash
-# Check logs for FFmpeg errors
-docker-compose logs videox | grep -i ffmpeg   # Docker
-tail -f /var/log/videox/videox.log | grep -i ffmpeg   # npm
-
-# Verify camera is accessible
-ping camera-ip
-
-# Test RTSP stream manually
-ffmpeg -rtsp_transport tcp -i rtsp://user:pass@camera:554/axis-media/media.amp -t 5 test.mp4
+docker-compose logs videox | grep -i ffmpeg   # Check FFmpeg errors
+ping <camera-ip>                              # Verify camera is accessible
 ```
 
-### MongoDB Connection Issues
-
-**For npm deployment:**
+**MongoDB connection issues:**
 ```bash
-# Verify MongoDB is running
-sudo systemctl status mongod
-
-# Test connection
-mongosh mongodb://localhost:27017/videox
+docker-compose logs videox-mongodb  # Check MongoDB logs
+docker-compose restart             # Restart all services
 ```
 
-**For Docker with external MongoDB:**
-```bash
-# Test connection from container
-docker-compose exec videox sh -c "wget -qO- mongodb-host:27017"
-```
+For detailed troubleshooting and integration issues, see [ARCHITECTURE.md](./ARCHITECTURE.md).
 
 ## Camera Requirements
 
@@ -388,16 +259,17 @@ docker-compose exec videox sh -c "wget -qO- mongodb-host:27017"
 - **Storage**: ~10-50 MB/hour per camera (depends on resolution and Zipstream settings)
 - **Network**: 1 Gbps recommended for multiple cameras
 
-## Security Considerations
+## Security
 
-- VideoX is designed for **local network use only**
-- Do NOT expose directly to the internet
-- Use a reverse proxy with SSL/TLS if internet access is needed
-- Change default admin credentials immediately
-- Set `NODE_ENV=production` for production deployments (enables secure cookies)
-- Camera credentials are encrypted with AES-256
-- Web UI uses session-based authentication with HTTP-only cookies
-- API tokens available for external integrations
+**Important security guidelines:**
+
+- **Local network only** - Do not expose directly to the internet
+- **Change default credentials** - Update ADMIN_USERNAME and ADMIN_PASSWORD immediately
+- **Generate secure keys** - Use strong SESSION_SECRET and ENCRYPTION_KEY values
+- **Production mode** - Set `NODE_ENV=production` for production deployments
+- **Reverse proxy** - Use NGINX or similar with SSL/TLS for internet access
+
+Camera credentials are encrypted with AES-256. See [ARCHITECTURE.md](./ARCHITECTURE.md) for production deployment patterns.
 
 ## Technology Stack
 
