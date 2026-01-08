@@ -182,7 +182,9 @@ router.post(
         // Don't fail the camera addition if recording fails
       }
 
-      const result = camera.toObject();
+      // Reload camera from database to get updated status (recording state may have changed)
+      const updatedCamera = await Camera.findById(serial);
+      const result = updatedCamera.toObject();
       delete result.credentials.password;
 
       res.status(201).json(result);
@@ -260,7 +262,9 @@ router.put('/:serial', authorize(['admin', 'operator']), async (req, res, next) 
       }
     }
 
-    const result = camera.toObject();
+    // Reload camera from database to get updated status (recording state may have changed)
+    const updatedCamera = await Camera.findById(req.params.serial);
+    const result = updatedCamera.toObject();
     delete result.credentials.password;
 
     res.json(result);
