@@ -311,13 +311,11 @@ function Cameras() {
                         color={getStatusColor(camera.status.connectionState)}
                         size="small"
                       />
-                      {camera.status.recordingState === 'recording' && (
-                        <Chip
-                          label="Recording"
-                          color="error"
-                          size="small"
-                        />
-                      )}
+                      <Chip
+                        label={camera.status.recordingState === 'recording' ? 'Recording' : 'Not recording'}
+                        color={camera.status.recordingState === 'recording' ? 'success' : 'error'}
+                        size="small"
+                      />
                     </Box>
                   </Box>
 

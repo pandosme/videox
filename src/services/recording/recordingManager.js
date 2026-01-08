@@ -270,13 +270,8 @@ class RecordingManager {
       const segmentPattern = path.join(cameraDir, '%Y', '%m', '%d', '%H', `${camera._id}_segment_%Y%m%d_%H%M%S.mp4`);
 
       const ffmpegArgs = [
-        // RTSP connection settings with timeouts to detect disconnected cameras
+        // RTSP connection settings
         '-rtsp_transport', 'tcp',
-        '-stimeout', '10000000',     // Socket timeout: 10 seconds (in microseconds)
-        '-timeout', '10000000',      // I/O timeout: 10 seconds (in microseconds)
-        '-reconnect', '1',           // Enable automatic reconnection
-        '-reconnect_streamed', '1',  // Reconnect even on streamed sources
-        '-reconnect_delay_max', '5', // Max delay between reconnection attempts: 5 seconds
         '-i', rtspUrl,
         '-c:v', 'libx264', // Re-encode video to control keyframes
         '-preset', 'ultrafast', // Fastest encoding for real-time recording
