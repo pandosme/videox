@@ -14,9 +14,14 @@ const Camera = require('../../models/Camera');
  */
 class RecordingManager {
   constructor() {
-    this.recordings = new Map(); // Map<cameraId, recordingProcess>
+    this.recordings = new Map(); // Map<cameraId, recordingData>
     this.storageBasePath = process.env.STORAGE_PATH || '/tmp/videox-storage';
     this.monitoringInterval = null;
+
+    // Health monitoring configuration
+    this.HEALTH_CHECK_INTERVAL_MS = 30000;      // Check every 30 seconds
+    this.ACTIVITY_TIMEOUT_MS = 90000;           // Consider hung if no activity for 90 seconds
+    this.SEGMENT_TIMEOUT_MS = 120000;           // Consider hung if no new segment for 120 seconds
   }
 
   /**
@@ -26,6 +31,11 @@ class RecordingManager {
     try {
       await fs.mkdir(this.storageBasePath, { recursive: true });
       logger.info(`Recording storage initialized: ${this.storageBasePath}`);
+
+      // Recover any orphaned segments from previous runs (async, don't block startup)
+      this.recoverOrphanedSegments().catch(err => {
+        logger.error('Error recovering orphaned segments:', err);
+      });
 
       // Resume recordings for cameras that were recording before shutdown
       await this.resumeActiveRecordings();
@@ -71,6 +81,141 @@ class RecordingManager {
     } catch (error) {
       logger.error('Error resuming recordings:', error);
     }
+  }
+
+  /**
+   * Recover orphaned segments from previous runs
+   * Scans the recordings directory for .mp4 files not in the database and imports them
+   */
+  async recoverOrphanedSegments() {
+    try {
+      const recordingsPath = path.join(this.storageBasePath, 'recordings');
+
+      // Check if recordings directory exists
+      try {
+        await fs.access(recordingsPath);
+      } catch {
+        logger.info('No recordings directory found, skipping orphan recovery');
+        return;
+      }
+
+      // Get all cameras
+      const cameras = await Camera.find({ active: true });
+
+      let recoveredCount = 0;
+      let errorCount = 0;
+
+      // Scan each camera's directory
+      for (const camera of cameras) {
+        const cameraDir = path.join(recordingsPath, camera._id.toString());
+
+        try {
+          await fs.access(cameraDir);
+        } catch {
+          continue; // Camera directory doesn't exist
+        }
+
+        // Recursively find all .mp4 files
+        const mp4Files = await this.findMp4Files(cameraDir);
+
+        for (const filePath of mp4Files) {
+          try {
+            // Check if already in database
+            const existing = await Recording.findOne({ filePath });
+            if (existing) {
+              continue;
+            }
+
+            // Parse timestamp from filename (format: <cameraId>_segment_YYYYMMDD_HHMMSS.mp4)
+            const filename = path.basename(filePath);
+            const match = filename.match(/segment_(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})\.mp4$/);
+
+            if (!match) {
+              logger.warn(`Cannot parse timestamp from orphaned file: ${filename}`);
+              continue;
+            }
+
+            const [, year, month, day, hour, minute, second] = match;
+            const startTime = new Date(
+              parseInt(year),
+              parseInt(month) - 1,
+              parseInt(day),
+              parseInt(hour),
+              parseInt(minute),
+              parseInt(second)
+            );
+
+            // Get file stats
+            const stats = await fs.stat(filePath);
+
+            if (stats.size < 1024) {
+              logger.warn(`Skipping small orphaned file (${stats.size} bytes): ${filename}`);
+              continue;
+            }
+
+            // Create recording entry
+            const recording = new Recording({
+              cameraId: camera._id,
+              filename,
+              filePath,
+              startTime,
+              endTime: new Date(startTime.getTime() + 60000),
+              duration: 60,
+              size: stats.size,
+              status: 'completed',
+              metadata: {
+                resolution: camera.streamSettings?.resolution || camera.recordingSettings?.resolution,
+                codec: 'h264',
+                recovered: true, // Mark as recovered for tracking
+              },
+            });
+
+            recording.calculateRetentionDate(camera.retentionDays || 30);
+            await recording.save();
+
+            recoveredCount++;
+            logger.info(`Recovered orphaned segment: ${filename}`);
+          } catch (err) {
+            errorCount++;
+            logger.error(`Error recovering segment ${filePath}:`, err);
+          }
+        }
+      }
+
+      if (recoveredCount > 0 || errorCount > 0) {
+        logger.info(`Orphan recovery complete: ${recoveredCount} recovered, ${errorCount} errors`);
+      }
+    } catch (error) {
+      logger.error('Error in orphan recovery:', error);
+    }
+  }
+
+  /**
+   * Recursively find all .mp4 files in a directory
+   * @param {string} dir - Directory to search
+   * @returns {Promise<string[]>} Array of file paths
+   */
+  async findMp4Files(dir) {
+    const files = [];
+
+    try {
+      const entries = await fs.readdir(dir, { withFileTypes: true });
+
+      for (const entry of entries) {
+        const fullPath = path.join(dir, entry.name);
+
+        if (entry.isDirectory()) {
+          const subFiles = await this.findMp4Files(fullPath);
+          files.push(...subFiles);
+        } else if (entry.isFile() && entry.name.endsWith('.mp4')) {
+          files.push(fullPath);
+        }
+      }
+    } catch (err) {
+      logger.debug(`Error reading directory ${dir}: ${err.message}`);
+    }
+
+    return files;
   }
 
   /**
@@ -125,7 +270,13 @@ class RecordingManager {
       const segmentPattern = path.join(cameraDir, '%Y', '%m', '%d', '%H', `${camera._id}_segment_%Y%m%d_%H%M%S.mp4`);
 
       const ffmpegArgs = [
+        // RTSP connection settings with timeouts to detect disconnected cameras
         '-rtsp_transport', 'tcp',
+        '-stimeout', '10000000',     // Socket timeout: 10 seconds (in microseconds)
+        '-timeout', '10000000',      // I/O timeout: 10 seconds (in microseconds)
+        '-reconnect', '1',           // Enable automatic reconnection
+        '-reconnect_streamed', '1',  // Reconnect even on streamed sources
+        '-reconnect_delay_max', '5', // Max delay between reconnection attempts: 5 seconds
         '-i', rtspUrl,
         '-c:v', 'libx264', // Re-encode video to control keyframes
         '-preset', 'ultrafast', // Fastest encoding for real-time recording
@@ -150,20 +301,29 @@ class RecordingManager {
 
       const ffmpegProcess = spawn('ffmpeg', ffmpegArgs);
 
-      // Track current and previous segment files
+      // Track current segment file (will be stored in recordingData after it's created)
       let currentSegmentPath = null;
       let segmentStartTime = null;
-      let previousSegmentPath = null;
-      let previousSegmentStartTime = null;
 
       // Handle stdout
       ffmpegProcess.stdout.on('data', (data) => {
         logger.debug(`FFmpeg [${cameraId}] stdout: ${data}`);
+        // Update activity timestamp
+        const recordingData = this.recordings.get(cameraId);
+        if (recordingData) {
+          recordingData.lastActivityTime = new Date();
+        }
       });
 
       // Handle stderr (FFmpeg outputs progress to stderr)
       ffmpegProcess.stderr.on('data', (data) => {
         const message = data.toString();
+
+        // Update activity timestamp on any FFmpeg output
+        const recordingData = this.recordings.get(cameraId);
+        if (recordingData) {
+          recordingData.lastActivityTime = new Date();
+        }
 
         // Detect when a new segment starts
         if (message.includes('Opening') && message.includes('.mp4')) {
@@ -181,11 +341,16 @@ class RecordingManager {
               });
             }
 
-            // Move current to previous, and set new current
-            previousSegmentPath = currentSegmentPath;
-            previousSegmentStartTime = segmentStartTime;
+            // Update current segment tracking
             currentSegmentPath = newSegmentPath;
             segmentStartTime = newSegmentStartTime;
+
+            // Store in recording data for health monitoring and recovery
+            if (recordingData) {
+              recordingData.currentSegmentPath = newSegmentPath;
+              recordingData.segmentStartTime = newSegmentStartTime;
+              recordingData.lastSegmentTime = new Date();
+            }
 
             logger.debug(`New segment started: ${currentSegmentPath}`);
           }
@@ -245,16 +410,23 @@ class RecordingManager {
         this.recordings.delete(cameraId);
       });
 
-      // Store process reference
-      this.recordings.set(cameraId, {
+      // Store process reference with health monitoring data
+      const recordingData = {
         process: ffmpegProcess,
         camera,
         startTime: new Date(),
-      });
+        lastActivityTime: new Date(),  // Track last FFmpeg activity
+        lastSegmentTime: null,         // Track when last segment was created
+        currentSegmentPath: null,      // Track current segment for recovery
+        segmentStartTime: null,        // Track current segment start time
+      };
+      this.recordings.set(cameraId, recordingData);
 
       // Update camera status
       await Camera.findByIdAndUpdate(cameraId, {
         'status.recordingState': 'recording',
+        'status.connectionState': 'online',
+        'status.lastSeen': new Date(),
       });
 
       logger.info(`Recording started for camera ${cameraId}`);
@@ -266,11 +438,16 @@ class RecordingManager {
 
   /**
    * Finalize a completed segment by creating metadata in MongoDB
+   * Includes retry logic for transient database errors
    * @param {Object} camera - Camera object
    * @param {string} segmentPath - Full path to segment file
    * @param {Date} startTime - Segment start time
+   * @param {number} retryCount - Current retry attempt (internal use)
    */
-  async finalizeSegment(camera, segmentPath, startTime) {
+  async finalizeSegment(camera, segmentPath, startTime, retryCount = 0) {
+    const MAX_RETRIES = 3;
+    const RETRY_DELAY_MS = 1000;
+
     try {
       // Check if this segment is already in the database
       const existingRecording = await Recording.findOne({ filePath: segmentPath });
@@ -280,10 +457,30 @@ class RecordingManager {
       }
 
       // Check if file exists and get stats
-      const stats = await fs.stat(segmentPath);
+      let stats;
+      try {
+        stats = await fs.stat(segmentPath);
+      } catch (err) {
+        if (err.code === 'ENOENT') {
+          logger.warn(`Segment file does not exist (may still be writing): ${segmentPath}`);
+          // File might still be writing, retry after a delay
+          if (retryCount < MAX_RETRIES) {
+            await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS * 2));
+            return this.finalizeSegment(camera, segmentPath, startTime, retryCount + 1);
+          }
+          return;
+        }
+        throw err;
+      }
 
       if (!stats.isFile()) {
         logger.warn(`Segment path is not a file: ${segmentPath}`);
+        return;
+      }
+
+      // Skip very small files (likely incomplete)
+      if (stats.size < 1024) {
+        logger.warn(`Segment file too small (${stats.size} bytes), skipping: ${segmentPath}`);
         return;
       }
 
@@ -316,8 +513,20 @@ class RecordingManager {
 
       await recording.save();
 
+      // Update camera's lastSeen to indicate it's actively recording
+      await Camera.findByIdAndUpdate(camera._id, {
+        'status.lastSeen': new Date(),
+        'status.connectionState': 'online',
+      });
+
       logger.info(`Segment finalized: ${filename} (${(stats.size / 1024 / 1024).toFixed(2)} MB)`);
     } catch (error) {
+      // Retry on transient database errors
+      if (retryCount < MAX_RETRIES && (error.name === 'MongoNetworkError' || error.name === 'MongoTimeoutError')) {
+        logger.warn(`Transient error finalizing segment ${segmentPath}, retrying (${retryCount + 1}/${MAX_RETRIES})...`);
+        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS * (retryCount + 1)));
+        return this.finalizeSegment(camera, segmentPath, startTime, retryCount + 1);
+      }
       logger.error(`Error finalizing segment ${segmentPath}:`, error);
     }
   }
@@ -419,10 +628,35 @@ class RecordingManager {
 
   /**
    * Check recording health and restart if needed
+   * Detects hung processes and cameras that should be recording but aren't
    * @private
    */
   async checkRecordingHealth() {
     try {
+      const now = new Date();
+
+      // First, check for hung processes in active recordings
+      for (const [cameraId, recordingData] of this.recordings.entries()) {
+        const timeSinceActivity = now - recordingData.lastActivityTime;
+        const timeSinceSegment = recordingData.lastSegmentTime
+          ? now - recordingData.lastSegmentTime
+          : now - recordingData.startTime;
+
+        // Check if process is hung (no activity for too long)
+        if (timeSinceActivity > this.ACTIVITY_TIMEOUT_MS) {
+          logger.warn(`Camera ${cameraId}: FFmpeg appears hung (no activity for ${Math.round(timeSinceActivity / 1000)}s). Killing and restarting...`);
+          await this.killAndRestartRecording(cameraId, recordingData);
+          continue;
+        }
+
+        // Check if no segments are being created (RTSP might be connected but not streaming data)
+        if (timeSinceSegment > this.SEGMENT_TIMEOUT_MS) {
+          logger.warn(`Camera ${cameraId}: No new segments for ${Math.round(timeSinceSegment / 1000)}s. Killing and restarting...`);
+          await this.killAndRestartRecording(cameraId, recordingData);
+          continue;
+        }
+      }
+
       // Find all cameras that should be recording (continuous mode, active)
       const cameras = await Camera.find({
         active: true,
@@ -450,8 +684,57 @@ class RecordingManager {
   }
 
   /**
+   * Kill a hung recording process and restart it
+   * @param {string} cameraId - Camera ID
+   * @param {Object} recordingData - Recording data from recordings Map
+   * @private
+   */
+  async killAndRestartRecording(cameraId, recordingData) {
+    try {
+      // Try to finalize any current segment before killing
+      if (recordingData.currentSegmentPath && recordingData.segmentStartTime) {
+        logger.info(`Attempting to finalize segment before restart: ${recordingData.currentSegmentPath}`);
+        try {
+          await this.finalizeSegment(recordingData.camera, recordingData.currentSegmentPath, recordingData.segmentStartTime);
+        } catch (err) {
+          logger.error(`Error finalizing segment during restart: ${err.message}`);
+        }
+      }
+
+      // Force kill the process
+      try {
+        recordingData.process.kill('SIGKILL');
+      } catch (err) {
+        logger.debug(`Error killing process: ${err.message}`);
+      }
+
+      // Remove from recordings map
+      this.recordings.delete(cameraId);
+
+      // Update camera status to reflect the issue
+      await Camera.findByIdAndUpdate(cameraId, {
+        'status.recordingState': 'error',
+        'status.lastError': 'Recording process hung - restarting',
+        'status.lastErrorTime': new Date(),
+      });
+
+      // Wait briefly before restarting
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
+      // Restart recording
+      const camera = await Camera.findById(cameraId);
+      if (camera && camera.active) {
+        await this.startRecording(camera);
+        logger.info(`Successfully restarted recording for camera ${cameraId}`);
+      }
+    } catch (error) {
+      logger.error(`Error during kill and restart for camera ${cameraId}:`, error);
+    }
+  }
+
+  /**
    * Start monitoring for cameras that should be recording
-   * Checks every 60 seconds
+   * Checks every 30 seconds for hung processes and missing recordings
    */
   startMonitoring() {
     if (this.monitoringInterval) {
@@ -459,14 +742,14 @@ class RecordingManager {
       return;
     }
 
-    logger.info('Starting recording health monitoring (60 second interval)');
+    logger.info(`Starting recording health monitoring (${this.HEALTH_CHECK_INTERVAL_MS / 1000} second interval)`);
 
-    // Run health check every 60 seconds
+    // Run health check at configured interval
     this.monitoringInterval = setInterval(() => {
       this.checkRecordingHealth().catch((err) => {
         logger.error('Error in monitoring interval:', err);
       });
-    }, 60000);
+    }, this.HEALTH_CHECK_INTERVAL_MS);
 
     // Also run immediately on startup
     this.checkRecordingHealth().catch((err) => {

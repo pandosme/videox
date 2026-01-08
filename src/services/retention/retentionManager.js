@@ -1,4 +1,5 @@
 const fs = require('fs').promises;
+const path = require('path');
 const logger = require('../../utils/logger');
 const Recording = require('../../models/Recording');
 const Camera = require('../../models/Camera');
@@ -11,6 +12,8 @@ class RetentionManager {
   constructor() {
     this.cleanupInterval = null;
     this.cleanupIntervalMs = 60 * 60 * 1000; // Run every hour
+    this.storageBasePath = process.env.STORAGE_PATH || '/tmp/videox-storage';
+    this.orphanAgeThresholdMs = 24 * 60 * 60 * 1000; // Only clean orphans older than 24 hours
   }
 
   /**
@@ -101,15 +104,157 @@ class RetentionManager {
 
       logger.info(`Retention cleanup completed: ${deletedCount} recordings deleted, ${freedGB} GB freed`);
 
+      // Also clean up orphaned files (files on disk but not in database)
+      const orphanResult = await this.cleanupOrphanedFiles();
+
       return {
         deleted: deletedCount,
         freed: freedBytes,
         freedMB,
         freedGB,
+        orphansDeleted: orphanResult.deleted,
+        orphansFreed: orphanResult.freed,
       };
     } catch (error) {
       logger.error('Error during retention cleanup:', error);
       throw error;
+    }
+  }
+
+  /**
+   * Clean up orphaned files (files on disk but not in database)
+   * Only cleans files older than the threshold to avoid removing files still being written
+   */
+  async cleanupOrphanedFiles() {
+    try {
+      const recordingsPath = path.join(this.storageBasePath, 'recordings');
+      const now = Date.now();
+
+      // Check if recordings directory exists
+      try {
+        await fs.access(recordingsPath);
+      } catch {
+        return { deleted: 0, freed: 0 };
+      }
+
+      // Get all cameras to know which directories to scan
+      const cameras = await Camera.find({});
+
+      let deletedCount = 0;
+      let freedBytes = 0;
+
+      for (const camera of cameras) {
+        const cameraDir = path.join(recordingsPath, camera._id.toString());
+
+        try {
+          await fs.access(cameraDir);
+        } catch {
+          continue; // Camera directory doesn't exist
+        }
+
+        // Find all .mp4 files recursively
+        const mp4Files = await this.findMp4Files(cameraDir);
+
+        for (const filePath of mp4Files) {
+          try {
+            // Check if file is in database
+            const recording = await Recording.findOne({ filePath });
+            if (recording) {
+              continue; // File has a database record, not an orphan
+            }
+
+            // Get file stats to check age
+            const stats = await fs.stat(filePath);
+            const fileAge = now - stats.mtime.getTime();
+
+            // Only delete orphans older than threshold (to avoid deleting files being written)
+            if (fileAge < this.orphanAgeThresholdMs) {
+              logger.debug(`Skipping recent orphan file (${Math.round(fileAge / 1000 / 60)} min old): ${filePath}`);
+              continue;
+            }
+
+            // Delete the orphan file
+            await fs.unlink(filePath);
+            deletedCount++;
+            freedBytes += stats.size;
+            logger.info(`Deleted orphan file: ${path.basename(filePath)} (${(stats.size / 1024 / 1024).toFixed(2)} MB)`);
+          } catch (err) {
+            if (err.code !== 'ENOENT') {
+              logger.error(`Error processing potential orphan ${filePath}:`, err);
+            }
+          }
+        }
+      }
+
+      // Also clean up empty directories
+      await this.cleanupEmptyDirectories(recordingsPath);
+
+      if (deletedCount > 0) {
+        logger.info(`Orphan cleanup: ${deletedCount} files deleted, ${(freedBytes / 1024 / 1024).toFixed(2)} MB freed`);
+      }
+
+      return { deleted: deletedCount, freed: freedBytes };
+    } catch (error) {
+      logger.error('Error cleaning up orphaned files:', error);
+      return { deleted: 0, freed: 0 };
+    }
+  }
+
+  /**
+   * Recursively find all .mp4 files in a directory
+   * @param {string} dir - Directory to search
+   * @returns {Promise<string[]>} Array of file paths
+   */
+  async findMp4Files(dir) {
+    const files = [];
+
+    try {
+      const entries = await fs.readdir(dir, { withFileTypes: true });
+
+      for (const entry of entries) {
+        const fullPath = path.join(dir, entry.name);
+
+        if (entry.isDirectory()) {
+          const subFiles = await this.findMp4Files(fullPath);
+          files.push(...subFiles);
+        } else if (entry.isFile() && entry.name.endsWith('.mp4')) {
+          files.push(fullPath);
+        }
+      }
+    } catch (err) {
+      logger.debug(`Error reading directory ${dir}: ${err.message}`);
+    }
+
+    return files;
+  }
+
+  /**
+   * Clean up empty directories recursively
+   * @param {string} dir - Directory to clean
+   */
+  async cleanupEmptyDirectories(dir) {
+    try {
+      const entries = await fs.readdir(dir, { withFileTypes: true });
+
+      for (const entry of entries) {
+        if (entry.isDirectory()) {
+          const fullPath = path.join(dir, entry.name);
+          await this.cleanupEmptyDirectories(fullPath);
+
+          // Try to remove directory if empty
+          try {
+            const subEntries = await fs.readdir(fullPath);
+            if (subEntries.length === 0) {
+              await fs.rmdir(fullPath);
+              logger.debug(`Removed empty directory: ${fullPath}`);
+            }
+          } catch (err) {
+            // Ignore errors when removing directories
+          }
+        }
+      }
+    } catch (err) {
+      // Ignore errors
     }
   }
 
