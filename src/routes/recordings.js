@@ -500,10 +500,10 @@ router.get('/export-clip', apiAuth, async (req, res, next) => {
           const fileStream = fs.createReadStream(outputPath, { start, end });
           fileStream.pipe(res);
 
-          // Cleanup after streaming
-          fileStream.on('end', () => {
+          // Cleanup after response is fully sent to client
+          res.on('close', () => {
             fs.unlink(outputPath, (err) => {
-              if (err) logger.error(`Failed to delete temp file ${outputPath}:`, err);
+              if (err && err.code !== 'ENOENT') logger.error(`Failed to delete temp file ${outputPath}:`, err);
             });
           });
         } else {
@@ -520,10 +520,10 @@ router.get('/export-clip', apiAuth, async (req, res, next) => {
           const fileStream = fs.createReadStream(outputPath);
           fileStream.pipe(res);
 
-          // Cleanup after streaming
-          fileStream.on('end', () => {
+          // Cleanup after response is fully sent to client
+          res.on('close', () => {
             fs.unlink(outputPath, (err) => {
-              if (err) logger.error(`Failed to delete temp file ${outputPath}:`, err);
+              if (err && err.code !== 'ENOENT') logger.error(`Failed to delete temp file ${outputPath}:`, err);
             });
           });
         }
@@ -622,10 +622,10 @@ router.get('/export-clip', apiAuth, async (req, res, next) => {
       const fileStream = fs.createReadStream(outputPath, { start, end });
       fileStream.pipe(res);
 
-      // Cleanup after streaming
-      fileStream.on('end', () => {
+      // Cleanup after response is fully sent to client
+      res.on('close', () => {
         fs.unlink(outputPath, (err) => {
-          if (err) logger.error(`Failed to delete temp file ${outputPath}:`, err);
+          if (err && err.code !== 'ENOENT') logger.error(`Failed to delete temp file ${outputPath}:`, err);
         });
       });
     } else {
@@ -642,10 +642,10 @@ router.get('/export-clip', apiAuth, async (req, res, next) => {
       const fileStream = fs.createReadStream(outputPath);
       fileStream.pipe(res);
 
-      // Cleanup after streaming
-      fileStream.on('end', () => {
+      // Cleanup after response is fully sent to client
+      res.on('close', () => {
         fs.unlink(outputPath, (err) => {
-          if (err) logger.error(`Failed to delete temp file ${outputPath}:`, err);
+          if (err && err.code !== 'ENOENT') logger.error(`Failed to delete temp file ${outputPath}:`, err);
         });
       });
     }
