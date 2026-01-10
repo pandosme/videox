@@ -444,6 +444,7 @@ router.get('/export-clip', apiAuth, async (req, res, next) => {
           '-preset', 'veryfast',         // Fast encoding preset
           '-crf', '23',                  // Quality (lower = better, 23 is good)
           '-c:a', 'aac',                 // Re-encode audio to match video timing
+          '-movflags', '+faststart',     // Move moov atom to beginning for robust playback
           '-avoid_negative_ts', 'make_zero',
           '-y',
           outputPath,
@@ -561,6 +562,7 @@ router.get('/export-clip', apiAuth, async (req, res, next) => {
       '-preset', 'veryfast',         // Fast encoding preset
       '-crf', '23',                  // Quality (lower = better, 23 is good)
       '-c:a', 'aac',                 // Re-encode audio to match video timing
+      '-movflags', '+faststart',     // Move moov atom to beginning for robust playback
       '-avoid_negative_ts', 'make_zero',
       '-y',
       outputPath,

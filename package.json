@@ -1,6 +1,6 @@
 {
   "name": "videox-backend",
-  "version": "1.1.4",
+  "version": "1.1.5",
   "description": "VideoX Video Management System - Backend API",
   "main": "src/server.js",
   "scripts": {
