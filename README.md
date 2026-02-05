@@ -239,6 +239,17 @@ Camera credentials are encrypted with AES-256. See [ARCHITECTURE.md](./ARCHITECT
 - **Issues**: https://github.com/pandosme/videox/issues
 - **Docker Hub**: https://hub.docker.com/r/pandosme/videox
 
+## History
+
+### February 2026 - Playback Interface Enhancement
+
+- **Playback Page**: Converted Dashboard to a dedicated Playback page with camera selection, date picker, and interactive timeline
+- **Time Range Selection**: Implemented draggable selection box on 24-hour overview with visual recording availability (green segments for recordings, red for gaps)
+- **Video Player Integration**: Added Video.js player with fixed 640x360 dimensions and continuous playback through segments
+- **Timeline Tracking**: Real-time timeline position updates during playback with automatic progression through recording segments
+- **Smart Seeking**: Fixed player source handling to prevent event loops when seeking to different timestamps
+- **UI Improvements**: Reorganized layout with camera selection at top, time selection overview, video player, and detailed playback slider
+
 ## License
 
 MIT License - See LICENSE file for details

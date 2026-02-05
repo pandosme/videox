@@ -65,10 +65,19 @@ export const removeOrphanedFiles = async () => {
 };
 
 /**
+ * Remove database records for missing files
+ * @returns {Promise<Object>} - Removal results
+ */
+export const removeMissingFileRecords = async () => {
+  const response = await api.delete('/storage/integrity/remove-missing');
+  return response.data;
+};
+
+/**
  * Flush all recordings - delete all database records and files
  * @returns {Promise<Object>} - Flush results
  */
 export const flushAllRecordings = async () => {
-  const response = await api.delete('/storage/flush-all');
+  const response = await api.post('/storage/flush');
   return response.data;
 };

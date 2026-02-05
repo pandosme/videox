@@ -56,6 +56,75 @@ curl http://localhost:3302/api/cameras \
 
 See [API Token Endpoints](#api-token-endpoints) for token management.
 
+## Date/Time Formats
+
+Several endpoints accept time parameters (e.g., `startTime`, `startDate`, `endDate`). VideoX supports multiple formats for flexibility:
+
+### Supported Formats
+
+| Format | Example | Description |
+|--------|---------|-------------|
+| **Unix Epoch (seconds)** | `1736531400` | Seconds since Jan 1, 1970 UTC. Most reliable format. |
+| **ISO 8601** | `2026-01-10T18:30:00.000Z` | Full ISO format with timezone (Z = UTC) |
+| **ISO 8601 (no ms)** | `2026-01-10T18:30:00Z` | ISO format without milliseconds |
+
+### Calculating Epoch Time
+
+**JavaScript:**
+```javascript
+// From Date object
+const epochSeconds = Math.floor(new Date('2026-01-10T18:30:00Z').getTime() / 1000);
+// Result: 1736531400
+
+// Current time
+const now = Math.floor(Date.now() / 1000);
+
+// 5 minutes ago
+const fiveMinAgo = Math.floor(Date.now() / 1000) - 300;
+```
+
+**Python:**
+```python
+from datetime import datetime
+
+# From datetime object
+epoch_seconds = int(datetime(2026, 1, 10, 18, 30, 0).timestamp())
+# Result: 1736531400
+
+# Current time
+import time
+now = int(time.time())
+```
+
+**Bash:**
+```bash
+# Current epoch time
+date +%s
+
+# Convert date to epoch
+date -d "2026-01-10T18:30:00Z" +%s
+```
+
+### Examples
+
+**Export using epoch seconds (recommended):**
+```bash
+curl "http://localhost:3302/api/recordings/export-clip?cameraId=B8A44F3024BB&startTime=1736531400&duration=60&token=<api_token>" -o clip.mp4
+```
+
+**Export using ISO 8601:**
+```bash
+curl "http://localhost:3302/api/recordings/export-clip?cameraId=B8A44F3024BB&startTime=2026-01-10T18:30:00Z&duration=60&token=<api_token>" -o clip.mp4
+```
+
+**Query recordings by date range:**
+```bash
+curl "http://localhost:3302/api/recordings?cameraId=B8A44F3024BB&startDate=2026-01-10T00:00:00Z&endDate=2026-01-10T23:59:59Z" \
+  -H "Authorization: Bearer <token>"
+```
+
+---
+
 ## Error Responses
 
 All errors follow this format:
@@ -672,21 +741,21 @@ GET /api/recordings/periods?cameraId=B8A44F3024BB&minDuration=3600
 ```bash
 # 1. Get available recording periods
 curl -H "Authorization: Bearer <token>" \
-  "http://localhost:3002/api/recordings/periods?cameraId=B8A44F3024BB"
+  "http://localhost:3302/api/recordings/periods?cameraId=B8A44F3024BB"
 
 # 2. Use startTimeEpoch and durationSeconds from response to export
 curl -H "Authorization: Bearer <token>" \
-  "http://localhost:3002/api/export?cameraId=B8A44F3024BB&startTime=1735146000&duration=5400" \
+  "http://localhost:3302/api/export?cameraId=B8A44F3024BB&startTime=1735146000&duration=5400" \
   -o recording.mp4
 ```
 
 **Example - Simple Integration (Query Parameter)**
 ```bash
 # 1. Get available recording periods (simple URL, works in browsers/VLC)
-curl "http://localhost:3002/api/recordings/periods?cameraId=B8A44F3024BB&token=<api_token>"
+curl "http://localhost:3302/api/recordings/periods?cameraId=B8A44F3024BB&token=<api_token>"
 
 # 2. Export using the discovered period
-curl "http://localhost:3002/api/export?cameraId=B8A44F3024BB&startTime=1735146000&duration=5400&token=<api_token>" \
+curl "http://localhost:3302/api/export?cameraId=B8A44F3024BB&startTime=1735146000&duration=5400&token=<api_token>" \
   -o recording.mp4
 ```
 
@@ -908,7 +977,7 @@ This endpoint provides a user-friendly way for external clients to stream record
 **Range Request Example**
 ```bash
 curl -H "Range: bytes=0-1048575" \
-  "http://localhost:3002/api/recordings/stream-by-time?cameraId=B8A44F3024BB&startTime=1735146000&token=<api_token>"
+  "http://localhost:3302/api/recordings/stream-by-time?cameraId=B8A44F3024BB&startTime=1735146000&token=<api_token>"
 ```
 
 **Error Response (404 Not Found)**
@@ -930,7 +999,7 @@ http://your-server:3002/api/recordings/stream-by-time?cameraId=B8A44F3024BB&star
 **Example - cURL with Authorization Header**
 ```bash
 curl -H "Authorization: Bearer <token>" \
-  "http://localhost:3002/api/recordings/stream-by-time?cameraId=B8A44F3024BB&startTime=1735146000" \
+  "http://localhost:3302/api/recordings/stream-by-time?cameraId=B8A44F3024BB&startTime=1735146000" \
   --output recording.mp4
 ```
 
@@ -1030,7 +1099,7 @@ This endpoint is designed for event-based retrieval where exact timing matters. 
 
 **Example - Export 90-second clip (spans 2 segments)**
 ```bash
-curl "http://localhost:3002/api/recordings/export-clip?cameraId=B8A44F3024BB&startTime=1735146000&duration=90&token=<api_token>" \
+curl "http://localhost:3302/api/recordings/export-clip?cameraId=B8A44F3024BB&startTime=1735146000&duration=90&token=<api_token>" \
   --output event_clip.mp4
 ```
 
@@ -1529,7 +1598,7 @@ This endpoint permanently deletes ALL recording metadata from the database and A
 
 **Example**
 ```bash
-curl -X DELETE "http://localhost:3002/api/storage/flush-all" \
+curl -X DELETE "http://localhost:3302/api/storage/flush-all" \
   -H "Authorization: Bearer <admin_token>"
 ```
 
@@ -1987,13 +2056,13 @@ Two authentication methods are supported:
 **Example - Stream Recording (Authorization Header)**
 ```bash
 curl -H "Authorization: Bearer <api_token>" \
-  "http://localhost:3002/api/export?cameraId=B8A44F3024BB&startTime=1735146000&duration=300&type=stream" \
+  "http://localhost:3302/api/export?cameraId=B8A44F3024BB&startTime=1735146000&duration=300&type=stream" \
   --output recording.mp4
 ```
 
 **Example - Stream Recording (Query Parameter - Simpler)**
 ```bash
-curl "http://localhost:3002/api/export?cameraId=B8A44F3024BB&startTime=1735146000&duration=300&type=stream&token=<api_token>" \
+curl "http://localhost:3302/api/export?cameraId=B8A44F3024BB&startTime=1735146000&duration=300&type=stream&token=<api_token>" \
   --output recording.mp4
 ```
 
@@ -2005,7 +2074,7 @@ http://your-server:3002/api/export?cameraId=B8A44F3024BB&startTime=1735146000&du
 
 **Example - Download as File**
 ```bash
-curl "http://localhost:3002/api/export?cameraId=B8A44F3024BB&startTime=1735146000&duration=60&type=file&token=<api_token>" \
+curl "http://localhost:3302/api/export?cameraId=B8A44F3024BB&startTime=1735146000&duration=60&type=file&token=<api_token>" \
   --output recording.mp4
 ```
 
@@ -2224,7 +2293,7 @@ ws.onmessage = (event) => {
 import axios from 'axios';
 
 const api = axios.create({
-  baseURL: 'http://localhost:3002/api',
+  baseURL: 'http://localhost:3302/api',
   timeout: 30000
 });
 
@@ -2263,20 +2332,20 @@ const startRecording = async (cameraId) => {
 
 **Login**
 ```bash
-curl -X POST http://localhost:3002/api/auth/login \
+curl -X POST http://localhost:3302/api/auth/login \
   -H "Content-Type: application/json" \
   -d '{"username":"admin","password":"admin123"}'
 ```
 
 **Get Cameras**
 ```bash
-curl http://localhost:3002/api/cameras \
+curl http://localhost:3302/api/cameras \
   -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
 ```
 
 **Add Camera**
 ```bash
-curl -X POST http://localhost:3002/api/cameras \
+curl -X POST http://localhost:3302/api/cameras \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." \
   -d '{
@@ -2291,7 +2360,7 @@ curl -X POST http://localhost:3002/api/cameras \
 
 **Stream Recording**
 ```bash
-curl http://localhost:3002/api/recordings/676c0a1f8e9b4c001a2b3c4d/stream \
+curl http://localhost:3302/api/recordings/676c0a1f8e9b4c001a2b3c4d/stream \
   -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." \
   --output recording.mp4
 ```

@@ -5,7 +5,7 @@ import { ToastProvider } from './context/ToastContext';
 
 // Pages (to be implemented)
 import Login from './pages/Login';
-import Dashboard from './pages/Dashboard';
+import Playback from './pages/Playback';
 import LiveView from './pages/LiveView';
 import Recordings from './pages/Recordings';
 import Cameras from './pages/Cameras';
@@ -39,7 +39,7 @@ function App() {
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route path="/" element={<Layout />}>
-              <Route index element={<Dashboard />} />
+              <Route index element={<Playback />} />
               <Route path="live" element={<LiveView />} />
               <Route path="recordings" element={<Recordings />} />
               <Route path="cameras" element={<Cameras />} />

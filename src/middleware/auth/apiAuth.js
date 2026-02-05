@@ -4,15 +4,23 @@ const logger = require('../../utils/logger');
 
 /**
  * API Authentication Middleware
- * Authenticates external clients using API tokens only
+ * Authenticates external clients using API tokens OR session authentication
  *
  * Methods:
- * 1. Authorization header: Authorization: Bearer <token>
- * 2. Query parameter: ?token=<token> (for simple clients like VLC)
+ * 1. Session-based: Use existing session from web UI login
+ * 2. Authorization header: Authorization: Bearer <token>
+ * 3. Query parameter: ?token=<token> (for simple clients like VLC)
  */
 const apiAuth = async (req, res, next) => {
   try {
-    // Try to get token from Authorization header first
+    // First check for session authentication (from web UI)
+    if (req.session && req.session.user) {
+      req.user = req.session.user;
+      req.authType = 'session';
+      return next();
+    }
+
+    // Try to get token from Authorization header
     let token = null;
     const authHeader = req.headers.authorization;
 
@@ -30,7 +38,7 @@ const apiAuth = async (req, res, next) => {
       return res.status(401).json({
         error: {
           code: 'UNAUTHORIZED',
-          message: 'Missing authentication token (provide via Authorization header or ?token= parameter)',
+          message: 'Missing authentication (login required or provide token via Authorization header or ?token= parameter)',
         },
       });
     }

@@ -1,6 +1,7 @@
 import { Drawer, List, ListItem, ListItemButton, ListItemIcon, ListItemText } from '@mui/material';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
+  PlayCircleOutline as PlaybackIcon,
   Camera as CameraIcon,
   Storage as StorageIcon,
   Settings as SettingsIcon,
@@ -9,6 +10,7 @@ import {
 const DRAWER_WIDTH = 240;
 
 const menuItems = [
+  { text: 'Playback', icon: <PlaybackIcon />, path: '/' },
   { text: 'Cameras', icon: <CameraIcon />, path: '/cameras' },
   { text: 'Storage', icon: <StorageIcon />, path: '/storage' },
   { text: 'Settings', icon: <SettingsIcon />, path: '/settings' },

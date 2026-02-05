@@ -1,12 +1,17 @@
 const fs = require('fs').promises;
 const path = require('path');
+const { exec } = require('child_process');
+const { promisify } = require('util');
 const logger = require('../../utils/logger');
 const Recording = require('../../models/Recording');
 const Camera = require('../../models/Camera');
+const SystemConfig = require('../../models/SystemConfig');
+
+const execAsync = promisify(exec);
 
 /**
  * Retention Manager
- * Handles automatic deletion of old recordings based on retention policies
+ * Handles automatic deletion of old recordings based on retention policies (time and storage)
  */
 class RetentionManager {
   constructor() {
@@ -14,6 +19,114 @@ class RetentionManager {
     this.cleanupIntervalMs = 60 * 60 * 1000; // Run every hour
     this.storageBasePath = process.env.STORAGE_PATH || '/tmp/videox-storage';
     this.orphanAgeThresholdMs = 24 * 60 * 60 * 1000; // Only clean orphans older than 24 hours
+  }
+
+  /**
+   * Get total size of all recordings from database
+   */
+  async getTotalRecordingSize() {
+    try {
+      const result = await Recording.aggregate([
+        {
+          $match: {
+            status: { $ne: 'deleted' },
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            totalSize: { $sum: '$size' },
+          },
+        },
+      ]);
+
+      return result.length > 0 ? result[0].totalSize : 0;
+    } catch (error) {
+      logger.error('Error getting total recording size:', error);
+      return 0;
+    }
+  }
+
+  /**
+   * Get disk usage for the storage path
+   */
+  async getDiskUsage() {
+    try {
+      const { stdout } = await execAsync(`df -k "${this.storageBasePath}" | tail -1`);
+      const parts = stdout.trim().split(/\s+/);
+
+      if (parts.length >= 4) {
+        const totalKB = parseInt(parts[1], 10);
+        const usedKB = parseInt(parts[2], 10);
+        const availableKB = parseInt(parts[3], 10);
+
+        return {
+          totalBytes: totalKB * 1024,
+          usedBytes: usedKB * 1024,
+          availableBytes: availableKB * 1024,
+          usagePercent: (usedKB / totalKB) * 100,
+        };
+      }
+    } catch (error) {
+      logger.error('Error getting disk usage:', error);
+    }
+
+    return null;
+  }
+
+  /**
+   * Check if recording storage exceeds user-defined GB limit
+   */
+  async isRecordingStorageOverLimit() {
+    try {
+      const maxStorageGB = await SystemConfig.getValue('maxStorageGB', null);
+      if (!maxStorageGB) {
+        return false; // No limit configured
+      }
+
+      const totalRecordingSize = await this.getTotalRecordingSize();
+      const totalRecordingGB = totalRecordingSize / 1024 / 1024 / 1024;
+      const isOverLimit = totalRecordingGB >= maxStorageGB;
+
+      if (isOverLimit) {
+        logger.info(
+          `Recording storage is over limit: ${totalRecordingGB.toFixed(2)} GB used ` +
+          `(limit: ${maxStorageGB} GB)`
+        );
+      }
+
+      return isOverLimit;
+    } catch (error) {
+      logger.error('Error checking recording storage limit:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Check if disk usage exceeds safety threshold (emergency brake)
+   */
+  async isDiskSpaceOverLimit() {
+    try {
+      const diskUsage = await this.getDiskUsage();
+      if (!diskUsage) {
+        return false;
+      }
+
+      const maxStoragePercent = await SystemConfig.getValue('maxStoragePercent', 95);
+      const isOverLimit = diskUsage.usagePercent >= maxStoragePercent;
+
+      if (isOverLimit) {
+        logger.warn(
+          `Disk space is over safety limit: ${diskUsage.usagePercent.toFixed(1)}% used ` +
+          `(limit: ${maxStoragePercent}%) - emergency cleanup activated`
+        );
+      }
+
+      return isOverLimit;
+    } catch (error) {
+      logger.error('Error checking disk space limit:', error);
+      return false;
+    }
   }
 
   /**
@@ -48,63 +161,127 @@ class RetentionManager {
 
   /**
    * Run retention cleanup process
-   * Deletes recordings that have passed their retention date
+   * Deletes recordings based on:
+   * 1. Time-based retention (recordings past their retention date)
+   * 2. Storage-based retention (delete oldest recordings when storage exceeds limit)
    */
   async runCleanup() {
     try {
       logger.info('Starting retention cleanup');
 
       const now = new Date();
-
-      // Find recordings eligible for deletion
-      const expiredRecordings = await Recording.find({
-        status: { $ne: 'deleted' },
-        protected: false, // Don't delete protected recordings
-        retentionDate: { $lte: now },
-      });
-
-      if (expiredRecordings.length === 0) {
-        logger.info('No recordings to clean up');
-        return {
-          deleted: 0,
-          freed: 0,
-        };
-      }
-
-      logger.info(`Found ${expiredRecordings.length} recordings to delete`);
-
       let deletedCount = 0;
       let freedBytes = 0;
 
-      for (const recording of expiredRecordings) {
-        try {
-          // Delete file from disk
+      // Phase 1: Time-based retention - delete expired recordings
+      const expiredRecordings = await Recording.find({
+        status: { $ne: 'deleted' },
+        protected: false,
+        retentionDate: { $lte: now },
+      }).sort({ startTime: 1 }); // Oldest first
+
+      if (expiredRecordings.length > 0) {
+        logger.info(`Found ${expiredRecordings.length} expired recordings to delete`);
+
+        for (const recording of expiredRecordings) {
           try {
-            await fs.unlink(recording.filePath);
-            freedBytes += recording.size;
-            logger.debug(`Deleted file: ${recording.filePath}`);
-          } catch (error) {
-            if (error.code !== 'ENOENT') {
-              logger.error(`Error deleting file ${recording.filePath}:`, error);
+            const freed = await this.deleteRecording(recording);
+            if (freed > 0) {
+              deletedCount++;
+              freedBytes += freed;
             }
+          } catch (error) {
+            logger.error(`Error deleting expired recording ${recording._id}:`, error);
+          }
+        }
+      }
+
+      // Phase 2: User-defined GB limit - delete oldest recordings if total recording size exceeds limit
+      let recordingStorageOverLimit = await this.isRecordingStorageOverLimit();
+      if (recordingStorageOverLimit) {
+        logger.info('Recording storage exceeds user-defined limit, starting cleanup');
+
+        // Get oldest unprotected recordings
+        let oldestRecordings = await Recording.find({
+          status: { $ne: 'deleted' },
+          protected: false,
+        })
+          .sort({ startTime: 1 }) // Oldest first
+          .limit(1000); // Process in batches
+
+        for (const recording of oldestRecordings) {
+          // Check if we're still over limit
+          recordingStorageOverLimit = await this.isRecordingStorageOverLimit();
+          if (!recordingStorageOverLimit) {
+            logger.info('Recording storage now within user-defined limit');
+            break;
           }
 
-          // Mark as deleted in database (keep metadata for audit)
-          recording.status = 'deleted';
-          await recording.save();
+          try {
+            const freed = await this.deleteRecording(recording);
+            if (freed > 0) {
+              deletedCount++;
+              freedBytes += freed;
+            }
+          } catch (error) {
+            logger.error(`Error deleting recording for storage cleanup ${recording._id}:`, error);
+          }
+        }
+      }
 
-          deletedCount++;
-        } catch (error) {
-          logger.error(`Error processing recording ${recording._id}:`, error);
+      // Phase 3: Disk space safety - delete oldest recordings if disk usage exceeds safety threshold
+      let diskSpaceOverLimit = await this.isDiskSpaceOverLimit();
+      if (diskSpaceOverLimit) {
+        logger.warn('Disk space exceeds safety threshold, starting emergency cleanup');
+
+        // Get oldest unprotected recordings
+        let oldestRecordings = await Recording.find({
+          status: { $ne: 'deleted' },
+          protected: false,
+        })
+          .sort({ startTime: 1 }) // Oldest first
+          .limit(1000); // Process in batches
+
+        for (const recording of oldestRecordings) {
+          // Check if we're still over limit
+          diskSpaceOverLimit = await this.isDiskSpaceOverLimit();
+          if (!diskSpaceOverLimit) {
+            logger.info('Disk space now within safety threshold');
+            break;
+          }
+
+          try {
+            const freed = await this.deleteRecording(recording);
+            if (freed > 0) {
+              deletedCount++;
+              freedBytes += freed;
+              logger.debug(
+                `Emergency cleanup: deleted ${recording.filename} ` +
+                `(${(freed / 1024 / 1024).toFixed(2)} MB)`
+              );
+            }
+          } catch (error) {
+            logger.error(`Error deleting recording for emergency cleanup ${recording._id}:`, error);
+          }
         }
       }
 
       const freedMB = (freedBytes / 1024 / 1024).toFixed(2);
       const freedGB = (freedBytes / 1024 / 1024 / 1024).toFixed(2);
 
-      logger.info(`Retention cleanup completed: ${deletedCount} recordings deleted, ${freedGB} GB freed`);
+      if (deletedCount === 0) {
+        logger.info('No recordings to clean up');
+      } else {
+        logger.info(
+          `Retention cleanup completed: ${deletedCount} recordings deleted, ${freedGB} GB freed`
+        );
+      }
 
-      // Also clean up orphaned files (files on disk but not in database)
+      // Clean up empty directories
+      const recordingsPath = path.join(this.storageBasePath, 'recordings');
+      await this.cleanupEmptyDirectories(recordingsPath);
+
+      // Also clean up orphaned files
       const orphanResult = await this.cleanupOrphanedFiles();
 
       return {
@@ -118,6 +295,37 @@ class RetentionManager {
     } catch (error) {
       logger.error('Error during retention cleanup:', error);
       throw error;
+    }
+  }
+
+  /**
+   * Delete a single recording (file and database record)
+   * @param {Object} recording - Recording document
+   * @returns {number} Bytes freed
+   */
+  async deleteRecording(recording) {
+    try {
+      let freedBytes = 0;
+
+      // Delete file from disk
+      try {
+        await fs.unlink(recording.filePath);
+        freedBytes = recording.size;
+        logger.debug(`Deleted file: ${recording.filePath}`);
+      } catch (error) {
+        if (error.code !== 'ENOENT') {
+          logger.error(`Error deleting file ${recording.filePath}:`, error);
+        }
+      }
+
+      // Mark as deleted in database (keep metadata for audit)
+      recording.status = 'deleted';
+      await recording.save();
+
+      return freedBytes;
+    } catch (error) {
+      logger.error(`Error deleting recording ${recording._id}:`, error);
+      return 0;
     }
   }
 

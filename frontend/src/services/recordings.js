@@ -99,3 +99,13 @@ export const deleteRecording = async (id) => {
   const response = await api.delete(`${API_URL}/${id}`);
   return response.data;
 };
+
+/**
+ * Get recording periods (continuous blocks) for timeline visualization
+ * @param {Object} filters - Filter options (cameraId, startDate, endDate, gapThreshold)
+ * @returns {Promise<Object>} - Recording periods with gaps
+ */
+export const getRecordingPeriods = async (filters = {}) => {
+  const response = await api.get(`${API_URL}/periods`, { params: filters });
+  return response.data;
+};

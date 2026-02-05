@@ -89,28 +89,37 @@ router.get('/stats', async (req, res, next) => {
     // Get disk usage
     const diskUsage = await getDiskUsage(storagePath);
 
-    // Get total recording count
-    const totalRecordings = await Recording.countDocuments();
+    // Get total recording count (exclude deleted)
+    const totalRecordings = await Recording.countDocuments({ status: { $ne: 'deleted' } });
 
-    // Get oldest and newest recordings
-    const oldestRecording = await Recording.findOne().sort({ startTime: 1 });
-    const newestRecording = await Recording.findOne().sort({ startTime: -1 });
+    // Get oldest and newest recordings (exclude deleted)
+    const oldestRecording = await Recording.findOne({ status: { $ne: 'deleted' } }).sort({ startTime: 1 });
+    const newestRecording = await Recording.findOne({ status: { $ne: 'deleted' } }).sort({ startTime: -1 });
 
     // Get per-camera statistics
     const cameras = await Camera.find({ active: true });
     const perCamera = [];
 
     for (const camera of cameras) {
-      const cameraRecordingCount = await Recording.countDocuments({ cameraId: camera._id });
+      const cameraRecordingCount = await Recording.countDocuments({ 
+        cameraId: camera._id,
+        status: { $ne: 'deleted' }
+      });
 
       // Calculate size of camera's recordings directory
       const cameraDir = path.join(recordingsPath, camera._id);
       const cameraSizeBytes = await getDirectorySize(cameraDir);
       const cameraSizeGB = (cameraSizeBytes / 1024 / 1024 / 1024).toFixed(2);
 
-      // Get oldest and newest for this camera
-      const cameraOldest = await Recording.findOne({ cameraId: camera._id }).sort({ startTime: 1 });
-      const cameraNewest = await Recording.findOne({ cameraId: camera._id }).sort({ startTime: -1 });
+      // Get oldest and newest for this camera (exclude deleted)
+      const cameraOldest = await Recording.findOne({ 
+        cameraId: camera._id,
+        status: { $ne: 'deleted' }
+      }).sort({ startTime: 1 });
+      const cameraNewest = await Recording.findOne({ 
+        cameraId: camera._id,
+        status: { $ne: 'deleted' }
+      }).sort({ startTime: -1 });
 
       // Calculate continuous segments (periods)
       const gapThreshold = 120 * 1000; // 2 minutes in milliseconds
@@ -277,6 +286,8 @@ router.get('/integrity', authorize(['admin', 'operator']), async (req, res, next
     }
 
     // Check for orphaned files (files without database records)
+    // Exclude files modified in the last 2 minutes (active recordings)
+    const twoMinutesAgo = Date.now() - (2 * 60 * 1000);
     const cameras = await Camera.find();
     for (const camera of cameras) {
       const cameraDir = path.join(recordingsPath, camera._id);
@@ -290,14 +301,24 @@ router.get('/integrity', authorize(['admin', 'operator']), async (req, res, next
             const dbRecord = dbRecordings.find(r => r.filePath === fullPath);
 
             if (!dbRecord) {
-              orphanedFiles++;
-              issues.push({
-                type: 'ORPHANED_FILE',
-                severity: 'warning',
-                filePath: fullPath,
-                cameraId: camera._id,
-                message: `File exists without database record: ${fullPath}`,
-              });
+              // Check if file is currently being written (modified within last 2 minutes)
+              try {
+                const stats = await fs.stat(fullPath);
+                if (stats.mtimeMs < twoMinutesAgo) {
+                  // Only report as orphan if it's not an active recording
+                  orphanedFiles++;
+                  issues.push({
+                    type: 'ORPHANED_FILE',
+                    severity: 'warning',
+                    filePath: fullPath,
+                    cameraId: camera._id,
+                    message: `File exists without database record: ${fullPath}`,
+                  });
+                }
+              } catch (statError) {
+                // File might have been deleted, ignore
+                logger.debug(`Cannot stat file ${fullPath}:`, statError.message);
+              }
             }
           }
         }
@@ -528,6 +549,52 @@ router.delete('/integrity/remove-orphaned', authorize(['admin']), async (req, re
 });
 
 /**
+ * DELETE /api/storage/integrity/remove-missing
+ * Remove database records for missing files
+ * Admin only
+ */
+router.delete('/integrity/remove-missing', authorize(['admin']), async (req, res, next) => {
+  try {
+    let deletedCount = 0;
+    const errors = [];
+
+    // Get all database recordings
+    const dbRecordings = await Recording.find();
+
+    for (const recording of dbRecordings) {
+      try {
+        // Check if file exists
+        await fs.access(recording.filePath, fs.constants.F_OK);
+      } catch {
+        // File doesn't exist, remove the database record
+        try {
+          await Recording.findByIdAndDelete(recording._id);
+          deletedCount++;
+
+          if (deletedCount % 100 === 0) {
+            logger.info(`Deleted ${deletedCount} missing file records so far...`);
+          }
+        } catch (error) {
+          errors.push(`Failed to delete record ${recording._id}: ${error.message}`);
+        }
+      }
+    }
+
+    logger.info(`Missing file cleanup completed: ${deletedCount} database records deleted`);
+
+    res.json({
+      success: true,
+      deletedCount,
+      errors: errors.slice(0, 10),
+      message: `Successfully removed ${deletedCount} database records for missing files`,
+    });
+  } catch (error) {
+    logger.error('Error removing missing file records:', error);
+    next(error);
+  }
+});
+
+/**
  * DELETE /api/storage/flush-all
  * Flush all recordings - delete all database records and files
  * Admin only - DESTRUCTIVE OPERATION
@@ -655,5 +722,216 @@ router.get('/cleanup/preview', authorize(['admin', 'operator']), async (req, res
     next(error);
   }
 });
+
+/**
+ * POST /api/storage/integrity-check
+ * Check and fix integrity issues between database and filesystem
+ */
+router.post('/integrity-check', authorize(['admin']), async (req, res, next) => {
+  try {
+    const { fix = false } = req.body;
+    const storagePath = process.env.STORAGE_PATH || '/tmp/videox-storage';
+    const recordingsPath = path.join(storagePath, 'recordings');
+
+    const issues = {
+      orphanedDbRecords: [],
+      missingFiles: [],
+      summary: {
+        totalDbRecords: 0,
+        totalFiles: 0,
+        orphanedDbCount: 0,
+        missingFileCount: 0,
+        fixed: fix,
+      },
+    };
+
+    // Get all recordings from database
+    const allRecordings = await Recording.find({ status: { $ne: 'deleted' } });
+    issues.summary.totalDbRecords = allRecordings.length;
+
+    // Check each database record
+    for (const recording of allRecordings) {
+      try {
+        await fs.access(recording.filePath);
+        // File exists, all good
+      } catch {
+        // File doesn't exist
+        issues.orphanedDbRecords.push({
+          id: recording._id,
+          filePath: recording.filePath,
+          camera: recording.camera,
+          startTime: recording.startTime,
+          size: recording.size,
+        });
+
+        if (fix) {
+          recording.status = 'deleted';
+          await recording.save();
+          logger.info(`Marked orphaned recording as deleted: ${recording.filePath}`);
+        }
+      }
+    }
+
+    issues.summary.orphanedDbCount = issues.orphanedDbRecords.length;
+
+    // Find all MP4 files on disk
+    const cameras = await Camera.find({});
+    const filesOnDisk = [];
+
+    for (const camera of cameras) {
+      const cameraDir = path.join(recordingsPath, camera._id.toString());
+      try {
+        await fs.access(cameraDir);
+        const mp4Files = await findMp4FilesRecursive(cameraDir);
+        filesOnDisk.push(...mp4Files);
+      } catch {
+        // Camera directory doesn't exist
+      }
+    }
+
+    issues.summary.totalFiles = filesOnDisk.length;
+
+    // Check for files without database records
+    for (const filePath of filesOnDisk) {
+      const recording = await Recording.findOne({ filePath, status: { $ne: 'deleted' } });
+      if (!recording) {
+        issues.missingFiles.push({ filePath });
+      }
+    }
+
+    issues.summary.missingFileCount = issues.missingFiles.length;
+
+    logger.info(
+      `Integrity check completed: ${issues.summary.orphanedDbCount} orphaned DB records, ` +
+      `${issues.summary.missingFileCount} files without DB records${fix ? ' (fixed)' : ''}`
+    );
+
+    res.json(issues);
+  } catch (error) {
+    logger.error('Error during integrity check:', error);
+    next(error);
+  }
+});
+
+/**
+ * Helper to recursively find MP4 files
+ */
+async function findMp4FilesRecursive(dir) {
+  const files = [];
+
+  try {
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+
+      if (entry.isDirectory()) {
+        const subFiles = await findMp4FilesRecursive(fullPath);
+        files.push(...subFiles);
+      } else if (entry.isFile() && entry.name.endsWith('.mp4')) {
+        files.push(fullPath);
+      }
+    }
+  } catch (err) {
+    logger.debug(`Error reading directory ${dir}: ${err.message}`);
+  }
+
+  return files;
+}
+
+/**
+ * POST /api/storage/flush
+ * Flush all recordings - delete all files and clear database
+ * Admin only - destructive operation
+ */
+router.post('/flush', authorize(['admin']), async (req, res, next) => {
+  try {
+    const storagePath = process.env.STORAGE_PATH || '/tmp/videox-storage';
+    const recordingsPath = path.join(storagePath, 'recordings');
+
+    let deletedFiles = 0;
+    let deletedDbRecords = 0;
+    let errors = [];
+
+    logger.warn(`FLUSH OPERATION initiated by ${req.user?.username || 'admin'}`);
+
+    // Delete all files from disk
+    const cameras = await Camera.find({});
+    
+    for (const camera of cameras) {
+      const cameraDir = path.join(recordingsPath, camera._id.toString());
+      
+      try {
+        await fs.access(cameraDir);
+        
+        // Get all MP4 files
+        const mp4Files = await findMp4FilesRecursive(cameraDir);
+        
+        // Delete each file
+        for (const filePath of mp4Files) {
+          try {
+            await fs.unlink(filePath);
+            deletedFiles++;
+          } catch (err) {
+            errors.push(`Failed to delete ${filePath}: ${err.message}`);
+          }
+        }
+        
+        // Remove empty directories recursively
+        await removeDirectoryRecursive(cameraDir);
+        
+      } catch (err) {
+        if (err.code !== 'ENOENT') {
+          errors.push(`Error processing camera ${camera._id}: ${err.message}`);
+        }
+      }
+    }
+
+    // Delete all recording records from database
+    const deleteResult = await Recording.deleteMany({});
+    deletedDbRecords = deleteResult.deletedCount;
+
+    logger.warn(
+      `FLUSH OPERATION completed: ${deletedFiles} files deleted, ` +
+      `${deletedDbRecords} database records deleted, ${errors.length} errors`
+    );
+
+    res.json({
+      success: true,
+      deletedFiles,
+      deletedDbRecords,
+      errors: errors.length > 0 ? errors : undefined,
+      message: `Flushed ${deletedFiles} files and ${deletedDbRecords} database records`,
+    });
+  } catch (error) {
+    logger.error('Error during flush operation:', error);
+    next(error);
+  }
+});
+
+/**
+ * Helper to recursively remove directory and its contents
+ */
+async function removeDirectoryRecursive(dir) {
+  try {
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+
+      if (entry.isDirectory()) {
+        await removeDirectoryRecursive(fullPath);
+      } else {
+        await fs.unlink(fullPath);
+      }
+    }
+
+    await fs.rmdir(dir);
+  } catch (err) {
+    if (err.code !== 'ENOENT') {
+      logger.debug(`Error removing directory ${dir}: ${err.message}`);
+    }
+  }
+}
 
 module.exports = router;

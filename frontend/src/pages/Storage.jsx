@@ -49,6 +49,7 @@ function Storage() {
   const [checkingIntegrity, setCheckingIntegrity] = useState(false);
   const [importingOrphans, setImportingOrphans] = useState(false);
   const [removingOrphans, setRemovingOrphans] = useState(false);
+  const [removingMissing, setRemovingMissing] = useState(false);
   const [flushDialog, setFlushDialog] = useState(false);
   const [flushingAll, setFlushingAll] = useState(false);
 
@@ -156,6 +157,30 @@ function Storage() {
       console.error(err);
     } finally {
       setRemovingOrphans(false);
+    }
+  };
+
+  const handleRemoveMissing = async () => {
+    if (!window.confirm(`Are you sure you want to remove ${integrityResults?.summary?.missingFiles || 0} database records for missing files? This action cannot be undone.`)) {
+      return;
+    }
+
+    try {
+      setRemovingMissing(true);
+      const result = await storageService.removeMissingFileRecords();
+      success(result.message);
+
+      // Re-run integrity check to update the dialog
+      const updatedResults = await storageService.checkIntegrity();
+      setIntegrityResults(updatedResults);
+
+      // Reload storage data
+      await loadData();
+    } catch (err) {
+      showError(err.response?.data?.error?.message || 'Failed to remove missing file records');
+      console.error(err);
+    } finally {
+      setRemovingMissing(false);
     }
   };
 
@@ -461,13 +486,24 @@ function Storage() {
           )}
         </DialogContent>
         <DialogActions>
+          {integrityResults && integrityResults.summary.missingFiles > 0 && isAdmin && (
+            <Button
+              onClick={handleRemoveMissing}
+              variant="outlined"
+              color="error"
+              disabled={importingOrphans || removingOrphans || removingMissing}
+              startIcon={removingMissing ? <CircularProgress size={20} /> : null}
+            >
+              {removingMissing ? 'Cleaning...' : 'Clean Missing File Records'}
+            </Button>
+          )}
           {integrityResults && integrityResults.summary.orphanedFiles > 0 && isAdmin && (
             <>
               <Button
                 onClick={handleImportOrphans}
                 variant="contained"
                 color="primary"
-                disabled={importingOrphans || removingOrphans}
+                disabled={importingOrphans || removingOrphans || removingMissing}
                 startIcon={importingOrphans ? <CircularProgress size={20} /> : null}
               >
                 {importingOrphans ? 'Importing...' : 'Add Orphan Files to DB'}
@@ -476,7 +512,7 @@ function Storage() {
                 onClick={handleRemoveOrphans}
                 variant="outlined"
                 color="error"
-                disabled={importingOrphans || removingOrphans}
+                disabled={importingOrphans || removingOrphans || removingMissing}
                 startIcon={removingOrphans ? <CircularProgress size={20} /> : null}
               >
                 {removingOrphans ? 'Removing...' : 'Remove Orphaned Files'}
@@ -484,7 +520,7 @@ function Storage() {
             </>
           )}
           <Box sx={{ flexGrow: 1 }} />
-          <Button onClick={() => setIntegrityDialog(false)} disabled={importingOrphans || removingOrphans}>
+          <Button onClick={() => setIntegrityDialog(false)} disabled={importingOrphans || removingOrphans || removingMissing}>
             Close
           </Button>
         </DialogActions>

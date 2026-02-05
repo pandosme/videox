@@ -14,6 +14,7 @@ import {
 import { useToast } from '../context/ToastContext';
 import { useAuth } from '../context/AuthContext';
 import ApiKeysManager from '../components/settings/ApiKeysManager';
+import SystemSettings from '../components/settings/SystemSettings';
 
 function Settings() {
   const [dateTimeFormat, setDateTimeFormat] = useState(
@@ -80,6 +81,13 @@ function Settings() {
             </CardContent>
           </Card>
         </Grid>
+
+        {/* System Settings - Admin Only */}
+        {isAdmin && (
+          <Grid item xs={12}>
+            <SystemSettings />
+          </Grid>
+        )}
 
         {/* API Keys Management Section - Admin Only */}
         {isAdmin && (
