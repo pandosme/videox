@@ -278,11 +278,10 @@ function Storage() {
                     <TableHead>
                       <TableRow>
                         <TableCell>Camera</TableCell>
-                        <TableCell align="right">Continuous Segments</TableCell>
+                        <TableCell>Model</TableCell>
+                        <TableCell>Serial</TableCell>
                         <TableCell align="right">Size (GB)</TableCell>
-                        <TableCell align="right">Retention (Days)</TableCell>
-                        <TableCell>Oldest</TableCell>
-                        <TableCell>Newest</TableCell>
+                        <TableCell align="right">Age (Days)</TableCell>
                       </TableRow>
                     </TableHead>
                     <TableBody>
@@ -294,21 +293,16 @@ function Storage() {
                               {camera.cameraName}
                             </Box>
                           </TableCell>
-                          <TableCell align="right">
-                            <Chip
-                              label={camera.continuousSegments || 0}
-                              size="small"
-                              color={camera.continuousSegments <= 5 ? 'success' : camera.continuousSegments <= 20 ? 'warning' : 'default'}
-                            />
-                          </TableCell>
+                          <TableCell>{camera.model}</TableCell>
+                          <TableCell>{camera.serial}</TableCell>
                           <TableCell align="right">
                             {camera.sizeGB.toFixed(2)}
                           </TableCell>
                           <TableCell align="right">
-                            <Chip label={camera.retentionDays} size="small" />
+                            {camera.oldestRecording
+                              ? Math.floor((Date.now() - new Date(camera.oldestRecording).getTime()) / (1000 * 60 * 60 * 24))
+                              : 'N/A'}
                           </TableCell>
-                          <TableCell>{formatDate(camera.oldestRecording)}</TableCell>
-                          <TableCell>{formatDate(camera.newestRecording)}</TableCell>
                         </TableRow>
                       ))}
                     </TableBody>

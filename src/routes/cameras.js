@@ -173,6 +173,17 @@ router.post(
 
       logger.info(`Camera added successfully: ${serial}`);
 
+      // Configure camera GOP via VAPIX so recordings can use -c:v copy without re-encoding.
+      // GOV = fps * 2 seconds (e.g. 25fps -> GOV=50 = keyframe every 2 seconds)
+      const streamFps = camera.streamSettings?.fps || 25;
+      const govLength = streamFps * 2;
+      try {
+        await vapixService.configureGOP(address, httpPort, credentials.username, credentials.password, govLength);
+      } catch (gopError) {
+        logger.warn(`Could not configure GOP for camera ${serial}: ${gopError.message}`);
+        // Non-fatal - recording works with camera's existing GOP setting
+      }
+
       // Auto-start recording for the new camera
       try {
         await recordingManager.startRecording(camera);

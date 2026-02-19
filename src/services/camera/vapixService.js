@@ -403,6 +403,51 @@ class VapixService {
   }
 
   /**
+   * Configure H.264 GOP (GOV) length on Axis camera
+   * Sets the keyframe interval so recordings can use -c:v copy without re-encoding.
+   * GOP = fps * interval_seconds (e.g. 25fps * 2s = 50 frames)
+   * @param {string} address - Camera IP address
+   * @param {number} port - Camera HTTP port
+   * @param {string} username - Camera username
+   * @param {string} password - Camera password
+   * @param {number} govLength - GOV length in frames
+   * @returns {Promise<boolean>} - True if successful
+   */
+  async configureGOP(address, port = 80, username, password, govLength = 50) {
+    const cleanAddr = this.cleanAddress(address);
+    const protocol = this.getProtocol(address, port);
+
+    // Try modern Video Encoder API (AXIS OS 6.x+)
+    try {
+      const url = `${protocol}://${cleanAddr}:${port}/axis-cgi/videoencoder.cgi`;
+      const body = {
+        apiVersion: '1.0',
+        method: 'setH264Parameters',
+        params: { channel: 1, govLength },
+      };
+      await this.digestPost(url, username, password, body);
+      logger.info(`GOP/GOV length set to ${govLength} frames via videoencoder.cgi on ${cleanAddr}`);
+      return true;
+    } catch (err) {
+      logger.debug(`videoencoder.cgi not available on ${cleanAddr}, trying param.cgi: ${err.message}`);
+    }
+
+    // Fall back to legacy param.cgi
+    try {
+      const url = `${protocol}://${cleanAddr}:${port}/axis-cgi/param.cgi?action=update&root.Image.I0.Stream.H264.GovLength=${govLength}`;
+      const result = await this.digestGet(url, username, password);
+      if (result.includes('OK')) {
+        logger.info(`GOP/GOV length set to ${govLength} frames via param.cgi on ${cleanAddr}`);
+        return true;
+      }
+      throw new Error(`Unexpected response: ${result.trim()}`);
+    } catch (err) {
+      logger.warn(`Could not configure GOP on ${cleanAddr}: ${err.message}. Camera will use its default GOP setting.`);
+      return false;
+    }
+  }
+
+  /**
    * Build RTSP URL for camera stream
    * @param {Object} camera - Camera object with settings
    * @returns {string} - RTSP URL

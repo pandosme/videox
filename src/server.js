@@ -149,7 +149,40 @@ app.use('/api/tokens', require('./routes/apiTokens'));
 app.use('/api/export', require('./routes/export'));
 
 // Serve HLS streams
+// Segments (.m4s, .ts, init.mp4) are served as static files.
+// Playlists are handled dynamically to support LL-HLS blocking reload requests.
 const hlsStreamManager = require('./services/stream/hlsStreamManager');
+
+// LL-HLS: blocking playlist endpoint (must be registered BEFORE the static handler)
+app.get('/hls/:cameraId/playlist.m3u8', async (req, res) => {
+  const { cameraId } = req.params;
+  const { _HLS_msn, _HLS_part } = req.query;
+
+  if (!hlsStreamManager.isStreamActive(cameraId)) {
+    return res.status(404).send('Stream not active');
+  }
+
+  res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+  res.setHeader('Cache-Control', 'no-cache, no-store');
+  res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
+
+  if (_HLS_msn !== undefined) {
+    // Blocking reload request – hold until the requested MSN/part is available
+    const targetMsn = parseInt(_HLS_msn, 10);
+    const targetPart = _HLS_part !== undefined ? parseInt(_HLS_part, 10) : -1;
+    try {
+      const content = await hlsStreamManager.waitForPlaylist(cameraId, targetMsn, targetPart, 10000);
+      res.send(content);
+    } catch {
+      res.status(408).send('Request Timeout');
+    }
+  } else {
+    // Non-blocking – return the latest cached playlist
+    const content = hlsStreamManager.getLatestPlaylist(cameraId);
+    content ? res.send(content) : res.status(503).send('Playlist not yet available');
+  }
+});
+
 app.use('/hls', express.static(path.join(process.env.STORAGE_PATH || '/tmp', 'hls')));
 
 // Serve frontend static files

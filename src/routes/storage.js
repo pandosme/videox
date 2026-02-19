@@ -121,32 +121,15 @@ router.get('/stats', async (req, res, next) => {
         status: { $ne: 'deleted' }
       }).sort({ startTime: -1 });
 
-      // Calculate continuous segments (periods)
-      const gapThreshold = 120 * 1000; // 2 minutes in milliseconds
-      const cameraRecordings = await Recording.find({
-        cameraId: camera._id,
-        status: 'completed'
-      }).sort({ startTime: 1 }).lean();
-
-      let continuousSegments = 0;
-      let lastEndTime = null;
-
-      for (const recording of cameraRecordings) {
-        if (!lastEndTime || (new Date(recording.startTime) - lastEndTime) > gapThreshold) {
-          continuousSegments++;
-        }
-        lastEndTime = new Date(recording.endTime);
-      }
-
       perCamera.push({
         cameraId: camera._id,
         cameraName: camera.name,
+        model: camera.metadata?.model || 'Unknown',
+        serial: camera._id,
         recordingCount: cameraRecordingCount,
-        continuousSegments: continuousSegments,
         sizeGB: parseFloat(cameraSizeGB),
         oldestRecording: cameraOldest ? cameraOldest.startTime : null,
         newestRecording: cameraNewest ? cameraNewest.startTime : null,
-        retentionDays: camera.retentionDays || 30,
       });
     }
 

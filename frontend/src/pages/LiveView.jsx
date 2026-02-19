@@ -51,10 +51,18 @@ function VideoPlayer({ camera, onError }) {
             preload: 'auto',
             fluid: true,
             liveui: true,
+            html5: {
+              vhs: {
+                llhls: true,                    // Enable Low-Latency HLS
+                enableLowInitialPlaylist: true, // Start from the lowest-latency point
+                liveBackBufferLength: 10,       // Keep 10s of back-buffer
+                overrideNative: true,           // Use VHS instead of native HLS (required for LL-HLS)
+              },
+            },
             sources: [
               {
                 src: streamInfo.playlistUrl,
-                type: 'application/x-mpegURL',
+                type: 'application/vnd.apple.mpegurl', // Correct MIME type for LL-HLS
               },
             ],
           });

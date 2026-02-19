@@ -5,10 +5,10 @@ A local recording engine for Axis IP cameras designed for integration with vario
 ## What is VideoX?
 
 VideoX is a **recording engine**, not a complete Video Management System (VMS). It provides:
-- Continuous recording from Axis cameras (60-second MP4 segments)
-- Built-in web interface for camera management.  It does not have a user interface for playback.
+- Continuous recording from Axis cameras (60-second MP4 segments, H.264 passthrough)
+- Built-in web interface for camera management. It does not have a user interface for playback.
 - RESTful API for integration with client applications
-- HLS live streaming and recording playback
+- Low-Latency HLS (LL-HLS) live streaming (~1–2 second latency)
 - Storage management with configurable retention
 - Docker-first deployment with embedded MongoDB
 
@@ -17,14 +17,15 @@ VideoX is a **recording engine**, not a complete Video Management System (VMS). 
 
 ## Key Capabilities
 
-- **Continuous Recording**: 60-second MP4 segments with forced keyframes for precise seeking
-- **Live Streaming**: HLS streams for real-time viewing
-- **Recording Playback**: Timestamp-based playback with frame-accurate seeking
+- **Continuous Recording**: 60-second MP4 segments using H.264 passthrough — no re-encoding, full Zipstream preservation
+- **Camera GOP Configuration**: Automatically sets keyframe interval (GOV) on each Axis camera via VAPIX on add
+- **Low-Latency HLS**: LL-HLS live streams with fMP4 segments and 500 ms parts (~1–2 s latency)
+- **Recording Playback**: Timestamp-based playback with frame-accurate seeking (two-pass FFmpeg)
 - **Export Clips**: Extract video clips spanning multiple recording segments
 - **Retention Management**: Automatic cleanup with configurable retention periods
 - **RESTful API**: Complete API for camera management, streaming, and playback
 - **Dual Authentication**: Sessions for web clients, API keys for integrations
-- **Axis Zipstream**: Full support for Axis compression technology
+- **Axis Zipstream**: Recordings preserve Zipstream compression — 30–80 % smaller files at no quality cost
 
 ## Quick Start
 
@@ -203,9 +204,9 @@ For detailed troubleshooting and integration issues, see [ARCHITECTURE.md](./ARC
 
 ## System Requirements
 
-- **Minimum**: 2 CPU cores, 4GB RAM, 50GB storage
-- **Recommended**: 4 CPU cores, 8GB RAM, 500GB+ storage
-- **Storage**: ~10-50 MB/hour per camera (depends on resolution and Zipstream settings)
+- **Minimum**: 2 CPU cores, 4 GB RAM, 50 GB storage
+- **Recommended**: 4 CPU cores, 8 GB RAM, 500 GB+ storage
+- **Storage**: ~5–30 MB/hour per camera (Zipstream compression is preserved — actual size depends on scene complexity, resolution and bitrate settings)
 - **Network**: 1 Gbps recommended for multiple cameras
 
 ## Security
@@ -225,8 +226,9 @@ Camera credentials are encrypted with AES-256. See [ARCHITECTURE.md](./ARCHITECT
 - **Node.js 20** - Runtime
 - **Express.js** - API framework
 - **MongoDB 7** - Camera and recording metadata
-- **FFmpeg** - Video processing (recording & streaming)
-- **Docker** - Container runtime (optional)
+- **FFmpeg** - Video processing (H.264 passthrough recording, LL-HLS streaming, clip export)
+- **React 18 + Vite** - Web management interface
+- **Docker** - Container runtime
 
 ## Documentation
 
@@ -241,14 +243,19 @@ Camera credentials are encrypted with AES-256. See [ARCHITECTURE.md](./ARCHITECT
 
 ## History
 
-### February 2026 - Playback Interface Enhancement
+### February 2026 — v1.2.0: LL-HLS, H.264 Passthrough & Storage View
+
+- **Low-Latency HLS (LL-HLS)**: Live streams now use fMP4 segments with 500 ms parts, reducing live latency from 5–10 seconds to ~1–2 seconds. Server implements the LL-HLS blocking-reload protocol (HLS spec §6.2.5.2) so clients receive each part the instant FFmpeg writes it.
+- **H.264 Passthrough Recording**: Switched from re-encoding (`libx264`) to `-c:v copy`. FFmpeg now muxes the camera's native H.264/Zipstream directly into MP4 — no decode/encode cycle. This eliminates per-camera CPU load and fully preserves Axis Zipstream compression (30–80 % smaller files).
+- **Automatic GOP Configuration**: When a camera is added, VideoX sets the H.264 GOV length on the camera via VAPIX (`videoencoder.cgi` with fallback to `param.cgi`). This ensures consistent keyframe intervals for frame-accurate seeking without re-encoding.
+- **Storage View**: Camera table now shows Model, Serial and Age (days since oldest recording) instead of the removed Continuous Segments, Retention and Oldest/Newest columns.
+
+### February 2026 — Playback Interface Enhancement
 
 - **Playback Page**: Converted Dashboard to a dedicated Playback page with camera selection, date picker, and interactive timeline
-- **Time Range Selection**: Implemented draggable selection box on 24-hour overview with visual recording availability (green segments for recordings, red for gaps)
-- **Video Player Integration**: Added Video.js player with fixed 640x360 dimensions and continuous playback through segments
-- **Timeline Tracking**: Real-time timeline position updates during playback with automatic progression through recording segments
-- **Smart Seeking**: Fixed player source handling to prevent event loops when seeking to different timestamps
-- **UI Improvements**: Reorganized layout with camera selection at top, time selection overview, video player, and detailed playback slider
+- **Time Range Selection**: Implemented draggable selection box on 24-hour overview with visual recording availability
+- **Video Player Integration**: Added Video.js player with continuous playback through segments
+- **Timeline Tracking**: Real-time timeline position updates during playback
 
 ## License
 
