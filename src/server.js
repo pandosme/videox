@@ -8,6 +8,7 @@ const rateLimit = require('express-rate-limit');
 const fs = require('fs').promises;
 const path = require('path');
 const logger = require('./utils/logger');
+const notifier = require('./services/notifier/notifier');
 const databaseManager = require('./config/database');
 const { errorHandler, notFoundHandler } = require('./middleware/errorHandler/errorHandler');
 
@@ -87,7 +88,7 @@ app.use(session({
     },
   }),
   cookie: {
-    secure: process.env.NODE_ENV === 'production', // HTTPS only in production
+    secure: process.env.COOKIE_SECURE === 'true', // set COOKIE_SECURE=true when behind HTTPS termination
     httpOnly: true, // Prevent XSS attacks
     maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
     sameSite: 'lax', // CSRF protection
@@ -210,6 +211,12 @@ app.get('/api/system/health', async (req, res) => {
   const dbHealth = databaseManager.getHealthStatus();
   const storageInfo = await getStorageInfo();
 
+  if (storageInfo.usagePercent >= 95) {
+    notifier.error('Lagring kritisk', `Lagringen är ${storageInfo.usagePercent}% full (${storageInfo.availableGB} GB kvar)`, 'storage-critical').catch(() => {});
+  } else if (storageInfo.usagePercent >= 85) {
+    notifier.warning('Lagring nästan full', `Lagringen är ${storageInfo.usagePercent}% full (${storageInfo.availableGB} GB kvar)`, 'storage-warn').catch(() => {});
+  }
+
   const status = dbHealth.overall === 'healthy' && storageInfo.availableGB > 0
     ? 'healthy'
     : 'degraded';
@@ -236,23 +243,22 @@ app.use(errorHandler);
 async function getStorageInfo() {
   try {
     const storagePath = process.env.STORAGE_PATH;
-    const { execSync } = require('child_process');
+    const { exec } = require('child_process');
 
-    // Get disk usage using df command (works in Docker and Linux)
-    const dfOutput = execSync(`df -BG "${storagePath}" | tail -1`).toString();
+    const dfOutput = await new Promise((resolve, reject) => {
+      const proc = exec(`df -BG "${storagePath}" | tail -1`, { timeout: 5000 }, (err, stdout) => {
+        if (err) reject(err); else resolve(stdout);
+      });
+      proc.on('error', reject);
+    });
+
     const parts = dfOutput.split(/\s+/);
-
     // df output: Filesystem 1G-blocks Used Available Use% Mounted
-    const totalGB = parseInt(parts[1]) || 0;
-    const usedGB = parseInt(parts[2]) || 0;
-    const availableGB = parseInt(parts[3]) || 0;
-    const usagePercent = parseInt(parts[4]) || 0;
-
     return {
-      totalGB,
-      usedGB,
-      availableGB,
-      usagePercent,
+      totalGB: parseInt(parts[1]) || 0,
+      usedGB: parseInt(parts[2]) || 0,
+      availableGB: parseInt(parts[3]) || 0,
+      usagePercent: parseInt(parts[4]) || 0,
     };
   } catch (error) {
     logger.error('Failed to get storage info:', error);
@@ -316,10 +322,15 @@ async function startup() {
     // 1. Connect to database
     logger.info('Connecting to database...');
 
+    // Initialize notifier early so it can report startup failures
+    await notifier.initialize();
+
     try {
       await databaseManager.connectMongoDB(5, 5000);
     } catch (error) {
       logger.error('Failed to connect to MongoDB');
+      notifier.error('Uppstart misslyckades', 'VideoX kunde inte ansluta till MongoDB').catch(() => {});
+      await new Promise(r => setTimeout(r, 2000)); // let notification drain
       process.exit(2);
     }
 
@@ -350,6 +361,7 @@ async function startup() {
     const server = app.listen(PORT, '0.0.0.0', () => {
       logger.info(`VideoX API server listening on 0.0.0.0:${PORT}`);
       logger.info('Service status: running');
+      notifier.info('VideoX startad', `Tjänsten körs på port ${PORT}`).catch(() => {});
     });
 
     // Setup graceful shutdown handlers
@@ -358,6 +370,8 @@ async function startup() {
     return server;
   } catch (error) {
     logger.error('Startup failed:', error);
+    notifier.error('Uppstart misslyckades', `VideoX kraschade vid start: ${error.message}`).catch(() => {});
+    await new Promise(r => setTimeout(r, 2000));
     process.exit(1);
   }
 }
@@ -368,6 +382,7 @@ async function startup() {
 function setupShutdownHandlers(server) {
   const shutdown = async (signal) => {
     logger.info(`${signal} received, initiating graceful shutdown...`);
+    await notifier.info('VideoX stängs ned', `Mottog signal ${signal}`).catch(() => {});
 
     // 1. Stop accepting new requests
     server.close(() => {
@@ -402,7 +417,10 @@ function setupShutdownHandlers(server) {
       logger.error('Error closing database connections:', error);
     }
 
-    // 6. Exit
+    // 6. Destroy notifier
+    notifier.destroy();
+
+    // 7. Exit
     logger.info('VideoX stopped successfully');
     process.exit(0);
   };
@@ -412,13 +430,15 @@ function setupShutdownHandlers(server) {
   process.on('SIGINT', () => shutdown('SIGINT'));
 
   // Handle uncaught errors
-  process.on('uncaughtException', (error) => {
+  process.on('uncaughtException', async (error) => {
     logger.error('Uncaught exception:', error);
+    await notifier.error('Oväntat fel', `VideoX kraschade: ${error.message}`).catch(() => {});
     process.exit(1);
   });
 
-  process.on('unhandledRejection', (reason, promise) => {
+  process.on('unhandledRejection', async (reason, promise) => {
     logger.error('Unhandled rejection at:', promise, 'reason:', reason);
+    await notifier.error('Ohanterat fel', `Ohanterat löfte-fel: ${reason}`).catch(() => {});
     process.exit(1);
   });
 }

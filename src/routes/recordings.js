@@ -202,118 +202,42 @@ router.get('/stream-by-time', apiAuth, async (req, res, next) => {
       });
     }
 
-    // If seekMode is 'timestamp' and we need to seek within the segment, use FFmpeg
+    // Serve via byte-range — recordings are faststart MP4 (moov at front) so the
+    // browser can seek natively without FFmpeg. Avoids frag_keyframe stalls at GOP boundaries.
     const segmentStart = new Date(recording.startTime);
     const trimStart = (start.getTime() - segmentStart.getTime()) / 1000;
 
-    if (seekMode === 'timestamp' && (trimStart > 0 || duration)) {
-      // Use FFmpeg for timestamp-based seeking
-      const { spawn } = require('child_process');
-
-      // Calculate duration
-      const segmentEnd = new Date(recording.endTime);
-      const maxDuration = (segmentEnd.getTime() - start.getTime()) / 1000;
-      const durationSec = duration ? Math.min(parseInt(duration), maxDuration) : maxDuration;
-
-      // Two-pass seeking for optimal performance and accuracy
-      const inputSeek = Math.max(0, trimStart - 2);
-      const outputSeek = trimStart - inputSeek;
-
-      const ffmpegArgs = [
-        '-ss', inputSeek.toString(),  // Fast seek to keyframe (before -i)
-        '-i', filePath,
-        '-ss', outputSeek.toString(), // Precise seek to exact frame (after -i)
-        '-t', durationSec.toString(),
-        '-c:v', 'copy',               // Copy video (no re-encoding for streaming)
-        '-c:a', 'copy',               // Copy audio
-        '-f', 'mp4',
-        '-movflags', 'frag_keyframe+empty_moov+default_base_moof', // Enable streaming
-        'pipe:1',                     // Output to stdout
-      ];
-
-      logger.info(`Streaming with FFmpeg seek: ${cameraId}, trimStart=${trimStart}s, duration=${durationSec}s`);
-      logger.debug(`FFmpeg command: ffmpeg ${ffmpegArgs.join(' ')}`);
-
-      const ffmpeg = spawn('ffmpeg', ffmpegArgs);
-
-      // Set response headers for streaming
-      res.writeHead(200, {
-        'Content-Type': 'video/mp4',
-        'Access-Control-Allow-Origin': req.headers.origin || '*',
-        'Cross-Origin-Resource-Policy': 'cross-origin',
-        'Cache-Control': 'no-cache',
-      });
-
-      // Pipe FFmpeg output to response
-      ffmpeg.stdout.pipe(res);
-
-      // Handle FFmpeg errors
-      let ffmpegStderr = '';
-      ffmpeg.stderr.on('data', (data) => {
-        ffmpegStderr += data.toString();
-      });
-
-      ffmpeg.on('error', (error) => {
-        logger.error(`FFmpeg error for ${cameraId}:`, error);
-        if (!res.headersSent) {
-          res.status(500).json({ error: 'Streaming error' });
-        }
-      });
-
-      ffmpeg.on('exit', (code) => {
-        if (code !== 0) {
-          logger.error(`FFmpeg exited with code ${code}. stderr: ${ffmpegStderr}`);
-        } else {
-          logger.debug(`FFmpeg streaming completed successfully for ${cameraId}`);
-        }
-      });
-
-      // Handle client disconnect
-      req.on('close', () => {
-        if (ffmpeg && !ffmpeg.killed) {
-          logger.debug(`Client disconnected, stopping FFmpeg for ${cameraId}`);
-          ffmpeg.kill('SIGTERM');
-        }
-      });
-
-      return;
-    }
-
-    // Default: byte-range streaming (legacy mode)
+    // Byte-range streaming — faststart MP4 lets browser seek without FFmpeg
     const stat = fs.statSync(filePath);
     const fileSize = stat.size;
     const range = req.headers.range;
 
+    const commonHeaders = {
+      'Content-Type': 'video/mp4',
+      'Accept-Ranges': 'bytes',
+      'X-Trim-Start': trimStart.toFixed(3),       // frontend seeks player.currentTime here
+      'Access-Control-Expose-Headers': 'X-Trim-Start',
+      'Access-Control-Allow-Origin': req.headers.origin || '*',
+      'Cross-Origin-Resource-Policy': 'cross-origin',
+    };
+
     if (range) {
-      // Handle range requests (for seeking in video)
       const parts = range.replace(/bytes=/, '').split('-');
-      const start = parseInt(parts[0], 10);
-      const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
-      const chunksize = (end - start) + 1;
-      const file = fs.createReadStream(filePath, { start, end });
-      const head = {
-        'Content-Range': `bytes ${start}-${end}/${fileSize}`,
-        'Accept-Ranges': 'bytes',
+      const byteStart = parseInt(parts[0], 10);
+      const byteEnd = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+      const chunksize = byteEnd - byteStart + 1;
+      res.writeHead(206, {
+        ...commonHeaders,
+        'Content-Range': `bytes ${byteStart}-${byteEnd}/${fileSize}`,
         'Content-Length': chunksize,
-        'Content-Type': 'video/mp4',
-        'Access-Control-Allow-Origin': req.headers.origin || '*',
-        'Cross-Origin-Resource-Policy': 'cross-origin',
-      };
-      res.writeHead(206, head);
-      file.pipe(res);
+      });
+      fs.createReadStream(filePath, { start: byteStart, end: byteEnd }).pipe(res);
     } else {
-      // Stream entire file
-      const head = {
-        'Content-Length': fileSize,
-        'Content-Type': 'video/mp4',
-        'Access-Control-Allow-Origin': req.headers.origin || '*',
-        'Cross-Origin-Resource-Policy': 'cross-origin',
-      };
-      res.writeHead(200, head);
+      res.writeHead(200, { ...commonHeaders, 'Content-Length': fileSize });
       fs.createReadStream(filePath).pipe(res);
     }
 
-    logger.info(`Streaming recording by time: ${cameraId} at ${start.toISOString()}`);
+    logger.info(`Streaming recording: ${cameraId} at ${start.toISOString()}, trimStart=${trimStart.toFixed(1)}s`);
   } catch (error) {
     logger.error('Error streaming recording by time:', error);
     next(error);

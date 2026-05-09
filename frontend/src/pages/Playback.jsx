@@ -48,6 +48,7 @@ function Playback() {
   const playerRef = useRef(null);
   const overviewRef = useRef(null);
   const playbackIntervalRef = useRef(null);
+  const timelineValueRef = useRef(0); // ref so handleSegmentEnded always reads current value
   
   const { error: showError } = useToast();
   const { user, isAuthenticated } = useAuth();
@@ -244,6 +245,7 @@ function Playback() {
   };
 
   const handleTimelineChange = (event, newValue) => {
+    timelineValueRef.current = newValue;
     setTimelineValue(newValue);
   };
 
@@ -284,59 +286,59 @@ function Playback() {
       }
 
       const startTimeEpoch = Math.floor(startTime.getTime() / 1000);
-      // selectedCamera is already the camera's serial number (_id)
       const streamUrl = `/api/recordings/stream-by-time?cameraId=${selectedCamera}&startTime=${startTimeEpoch}`;
+
+      // Fetch trim offset — server tells us how many seconds into the segment to seek
+      let trimStart = 0;
+      try {
+        const head = await fetch(streamUrl, { method: 'HEAD', credentials: 'include' });
+        trimStart = parseFloat(head.headers.get('X-Trim-Start') || '0');
+      } catch (_) { /* use 0 if HEAD fails */ }
 
       setCurrentRecording(streamUrl);
       setIsPlaying(false);
 
+      const dayStart = new Date(selectedDate);
+      dayStart.setHours(0, 0, 0, 0);
+      const startSeconds = Math.floor((startTime - dayStart) / 1000);
+
+      const applyTrimAndPlay = (player) => {
+        if (trimStart > 0) {
+          player.one('loadedmetadata', () => {
+            player.currentTime(trimStart);
+          });
+        }
+        player.play().catch(err => console.error('Autoplay failed:', err));
+      };
+
       // If player exists, change source instead of recreating
       if (playerRef.current) {
         try {
-          // Remove event listeners to prevent loops when changing source
           playerRef.current.off('ended');
           playerRef.current.off('play');
           playerRef.current.off('pause');
           playerRef.current.off('error');
-          
+
           playerRef.current.pause();
-          playerRef.current.src({
-            src: streamUrl,
-            type: 'video/mp4',
-          });
+          playerRef.current.src({ src: streamUrl, type: 'video/mp4' });
           playerRef.current.load();
-          
-          // Update playback tracking
-          const dayStart = new Date(selectedDate);
-          dayStart.setHours(0, 0, 0, 0);
-          const startSeconds = Math.floor((startTime - dayStart) / 1000);
+
           setPlaybackStartTime(Date.now());
           setPlaybackStartPosition(startSeconds);
-          
-          // Re-add event listeners
+
           playerRef.current.on('play', () => setIsPlaying(true));
           playerRef.current.on('pause', () => setIsPlaying(false));
           playerRef.current.on('error', (e) => {
             console.error('Video.js error:', e);
-            const error = playerRef.current?.error();
-            if (error) {
-              showError(`Playback error: ${error.message || 'Unknown error'}`);
-            }
+            const err = playerRef.current?.error();
+            if (err) showError(`Playback error: ${err.message || 'Unknown error'}`);
           });
-          playerRef.current.on('ended', () => {
-            console.log('Video segment ended');
-            handleSegmentEnded();
-          });
-          
-          // Auto-play the new source
-          playerRef.current.play().catch(err => {
-            console.error('Autoplay failed:', err);
-          });
-          
+          playerRef.current.on('ended', () => handleSegmentEnded());
+
+          applyTrimAndPlay(playerRef.current);
           return;
         } catch (err) {
           console.error('Error changing source, will recreate player:', err);
-          // If changing source fails, dispose and recreate
           playerRef.current.dispose();
           playerRef.current = null;
         }
@@ -364,20 +366,11 @@ function Playback() {
 
         playerRef.current = player;
 
-        // Track playback start
-        player.on('play', () => {
-          setIsPlaying(true);
-          const dayStart = new Date(selectedDate);
-          dayStart.setHours(0, 0, 0, 0);
-          const startSeconds = Math.floor((startTime - dayStart) / 1000);
-          setPlaybackStartTime(Date.now());
-          setPlaybackStartPosition(startSeconds);
-        });
+        setPlaybackStartTime(Date.now());
+        setPlaybackStartPosition(startSeconds);
 
-        player.on('pause', () => {
-          setIsPlaying(false);
-        });
-
+        player.on('play', () => setIsPlaying(true));
+        player.on('pause', () => setIsPlaying(false));
         player.on('error', () => {
           const playerError = player.error();
           console.error('Player error:', playerError);
@@ -388,12 +381,9 @@ function Playback() {
           }
           showError(playerError?.message || 'Playback error occurred');
         });
+        player.on('ended', () => handleSegmentEnded());
 
-        player.on('ended', () => {
-          console.log('Segment ended, attempting continuous playback');
-          setIsPlaying(false);
-          handleSegmentEnded();
-        });
+        applyTrimAndPlay(player);
       }
     } catch (err) {
       console.error('Error starting playback:', err);
@@ -404,8 +394,8 @@ function Playback() {
 
   // Handle segment end - continue to next or stop
   const handleSegmentEnded = async () => {
-    // Calculate next position (current + 1 second)
-    const nextPosition = timelineValue + 1;
+    // Use ref to get current timeline position — state would be stale in this closure
+    const nextPosition = timelineValueRef.current + 1;
 
     // Check if we're at the end of selection or day
     if (nextPosition >= selectionEnd || nextPosition >= 86400) {
@@ -456,6 +446,7 @@ function Playback() {
             return;
           }
           
+          timelineValueRef.current = Math.floor(newPosition);
           setTimelineValue(Math.floor(newPosition));
         }
       }, 500);

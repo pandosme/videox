@@ -135,8 +135,10 @@ class RetentionManager {
   async initialize() {
     logger.info('Initializing retention manager');
 
-    // Run initial cleanup
-    await this.runCleanup();
+    // Run initial cleanup in background — don't block server startup
+    this.runCleanup().catch((error) => {
+      logger.error('Error in initial cleanup:', error);
+    });
 
     // Schedule periodic cleanup
     this.cleanupInterval = setInterval(() => {
@@ -318,9 +320,8 @@ class RetentionManager {
         }
       }
 
-      // Mark as deleted in database (keep metadata for audit)
-      recording.status = 'deleted';
-      await recording.save();
+      // Remove from database entirely — keeping ghost records causes preview count bloat
+      await recording.deleteOne();
 
       return freedBytes;
     } catch (error) {

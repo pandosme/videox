@@ -84,63 +84,50 @@ async function getDiskUsage(dirPath) {
 router.get('/stats', async (req, res, next) => {
   try {
     const storagePath = process.env.STORAGE_PATH;
-    const recordingsPath = path.join(storagePath, 'recordings');
 
-    // Get disk usage
-    const diskUsage = await getDiskUsage(storagePath);
+    // All stats from DB — no filesystem walking
+    const [diskUsage, globalAgg, cameras, cameraAggs] = await Promise.all([
+      getDiskUsage(storagePath),
+      Recording.aggregate([
+        { $match: { status: { $ne: 'deleted' } } },
+        { $group: {
+          _id: null,
+          totalCount: { $sum: 1 },
+          totalSize: { $sum: '$size' },
+          avgSize: { $avg: '$size' },
+          oldest: { $min: '$startTime' },
+          newest: { $max: '$startTime' },
+        }},
+      ]),
+      Camera.find({ active: true }),
+      Recording.aggregate([
+        { $match: { status: { $ne: 'deleted' } } },
+        { $group: {
+          _id: '$cameraId',
+          count: { $sum: 1 },
+          totalSize: { $sum: '$size' },
+          oldest: { $min: '$startTime' },
+          newest: { $max: '$startTime' },
+        }},
+      ]),
+    ]);
 
-    // Get total recording count (exclude deleted)
-    const totalRecordings = await Recording.countDocuments({ status: { $ne: 'deleted' } });
+    const global = globalAgg[0] || { totalCount: 0, totalSize: 0, avgSize: 0, oldest: null, newest: null };
+    const aggByCam = Object.fromEntries(cameraAggs.map(a => [String(a._id), a]));
 
-    // Get oldest and newest recordings (exclude deleted)
-    const oldestRecording = await Recording.findOne({ status: { $ne: 'deleted' } }).sort({ startTime: 1 });
-    const newestRecording = await Recording.findOne({ status: { $ne: 'deleted' } }).sort({ startTime: -1 });
-
-    // Get per-camera statistics
-    const cameras = await Camera.find({ active: true });
-    const perCamera = [];
-
-    for (const camera of cameras) {
-      const cameraRecordingCount = await Recording.countDocuments({ 
-        cameraId: camera._id,
-        status: { $ne: 'deleted' }
-      });
-
-      // Calculate size of camera's recordings directory
-      const cameraDir = path.join(recordingsPath, camera._id);
-      const cameraSizeBytes = await getDirectorySize(cameraDir);
-      const cameraSizeGB = (cameraSizeBytes / 1024 / 1024 / 1024).toFixed(2);
-
-      // Get oldest and newest for this camera (exclude deleted)
-      const cameraOldest = await Recording.findOne({ 
-        cameraId: camera._id,
-        status: { $ne: 'deleted' }
-      }).sort({ startTime: 1 });
-      const cameraNewest = await Recording.findOne({ 
-        cameraId: camera._id,
-        status: { $ne: 'deleted' }
-      }).sort({ startTime: -1 });
-
-      perCamera.push({
+    const perCamera = cameras.map(camera => {
+      const agg = aggByCam[String(camera._id)] || { count: 0, totalSize: 0, oldest: null, newest: null };
+      return {
         cameraId: camera._id,
         cameraName: camera.name,
         model: camera.metadata?.model || 'Unknown',
         serial: camera._id,
-        recordingCount: cameraRecordingCount,
-        sizeGB: parseFloat(cameraSizeGB),
-        oldestRecording: cameraOldest ? cameraOldest.startTime : null,
-        newestRecording: cameraNewest ? cameraNewest.startTime : null,
-      });
-    }
-
-    // Calculate total recordings size
-    const totalRecordingsSizeBytes = perCamera.reduce((sum, cam) => sum + (cam.sizeGB * 1024 * 1024 * 1024), 0);
-    const totalRecordingsSizeGB = (totalRecordingsSizeBytes / 1024 / 1024 / 1024).toFixed(2);
-
-    // Calculate average recording size
-    const avgRecordingSizeMB = totalRecordings > 0
-      ? ((totalRecordingsSizeBytes / totalRecordings) / 1024 / 1024).toFixed(2)
-      : 0;
+        recordingCount: agg.count,
+        sizeGB: parseFloat((agg.totalSize / 1024 / 1024 / 1024).toFixed(2)),
+        oldestRecording: agg.oldest,
+        newestRecording: agg.newest,
+      };
+    });
 
     res.json({
       storagePath,
@@ -151,11 +138,11 @@ router.get('/stats', async (req, res, next) => {
         usagePercent: parseFloat(diskUsage.usagePercent),
       },
       recordings: {
-        totalCount: totalRecordings,
-        totalSizeGB: parseFloat(totalRecordingsSizeGB),
-        avgSizeMB: parseFloat(avgRecordingSizeMB),
-        oldestRecording: oldestRecording ? oldestRecording.startTime : null,
-        newestRecording: newestRecording ? newestRecording.startTime : null,
+        totalCount: global.totalCount,
+        totalSizeGB: parseFloat((global.totalSize / 1024 / 1024 / 1024).toFixed(2)),
+        avgSizeMB: parseFloat((global.avgSize / 1024 / 1024).toFixed(2)),
+        oldestRecording: global.oldest,
+        newestRecording: global.newest,
       },
       perCamera,
     });
@@ -666,8 +653,9 @@ router.get('/cleanup/preview', authorize(['admin', 'operator']), async (req, res
   try {
     const now = new Date();
 
-    // Find recordings that would be deleted
+    // Find recordings that would be deleted (exclude already-deleted records)
     const recordingsToDelete = await Recording.find({
+      status: { $ne: 'deleted' },
       retentionDate: { $lt: now },
       protected: false,
     }).populate('cameraId', 'name');
@@ -692,10 +680,10 @@ router.get('/cleanup/preview', authorize(['admin', 'operator']), async (req, res
         count,
       })),
       oldestDate: recordingsToDelete.length > 0
-        ? Math.min(...recordingsToDelete.map(r => r.startTime.getTime()))
+        ? recordingsToDelete.reduce((min, r) => r.startTime < min ? r.startTime : min, recordingsToDelete[0].startTime)
         : null,
       newestDate: recordingsToDelete.length > 0
-        ? Math.max(...recordingsToDelete.map(r => r.startTime.getTime()))
+        ? recordingsToDelete.reduce((max, r) => r.startTime > max ? r.startTime : max, recordingsToDelete[0].startTime)
         : null,
     };
 

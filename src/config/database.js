@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const logger = require('../utils/logger');
+const notifier = require('../services/notifier/notifier');
 
 class DatabaseManager {
   constructor() {
@@ -34,16 +35,19 @@ class DatabaseManager {
         mongoose.connection.on('error', (err) => {
           logger.error('MongoDB connection error:', err);
           this.isMongoConnected = false;
+          notifier.error('Databasfel', `MongoDB-fel: ${err.message}`, 'db-error').catch(() => {});
         });
 
         mongoose.connection.on('disconnected', () => {
           logger.warn('MongoDB disconnected');
           this.isMongoConnected = false;
+          notifier.error('Databas frånkopplad', 'MongoDB tappade anslutningen', 'db-disconnect').catch(() => {});
         });
 
         mongoose.connection.on('reconnected', () => {
           logger.info('MongoDB reconnected');
           this.isMongoConnected = true;
+          notifier.info('Databas återansluten', 'MongoDB-anslutning återställd', 'db-reconnect').catch(() => {});
         });
 
         return true;
