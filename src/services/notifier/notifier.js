@@ -7,6 +7,9 @@ const HTTP_URL = process.env.NOTIFY_HTTP_URL || 'http://fred.internal/api/aviser
 // Minimum ms between repeated notifications for the same key
 const DEBOUNCE_MS = parseInt(process.env.NOTIFY_DEBOUNCE_MS || '300000', 10); // 5 min default
 
+const LEVEL_RANK = { Info: 0, Varning: 1, Fel: 2 };
+const MIN_LEVEL = process.env.NOTIFY_MIN_LEVEL || 'Varning';
+
 class Notifier {
   constructor() {
     this.mqttClient = null;
@@ -47,6 +50,7 @@ class Notifier {
 
   // Send notification, optionally debounced by key
   async notify(type, titel, message, debounceKey = null) {
+    if ((LEVEL_RANK[type] ?? 0) < (LEVEL_RANK[MIN_LEVEL] ?? 0)) return;
     if (debounceKey) {
       const last = this.lastSent.get(debounceKey) || 0;
       if (Date.now() - last < DEBOUNCE_MS) return;
