@@ -196,16 +196,15 @@ class RecordingManager {
    * @param {string} dir - Directory to search
    * @returns {Promise<string[]>} Array of file paths
    */
-  async createUpcomingHourDirs(cameraDir, hoursAhead = 25) {
+  async createUpcomingDayDirs(cameraDir, daysAhead = 2) {
     const now = Date.now();
-    for (let i = 0; i <= hoursAhead; i++) {
-      const t = new Date(now + i * 3600000);
+    for (let i = 0; i <= daysAhead; i++) {
+      const t = new Date(now + i * 86400000);
       const dir = path.join(
         cameraDir,
         String(t.getFullYear()),
         String(t.getMonth() + 1).padStart(2, '0'),
-        String(t.getDate()).padStart(2, '0'),
-        String(t.getHours()).padStart(2, '0')
+        String(t.getDate()).padStart(2, '0')
       );
       await fs.mkdir(dir, { recursive: true });
     }
@@ -272,12 +271,12 @@ class RecordingManager {
       logger.info(`Building RTSP URL with: address=${cameraForUrl.address}, port=${cameraForUrl.port}`);
       const rtspUrl = vapixService.buildRTSPUrl(cameraForUrl);
 
-      // Pre-create directories for the next 25 hours so FFmpeg never hits ENOENT at hour rollover
-      await this.createUpcomingHourDirs(cameraDir, 25);
+      // Pre-create directories for the next 2 days so FFmpeg never hits ENOENT at day rollover
+      await this.createUpcomingDayDirs(cameraDir, 2);
 
       // Build FFmpeg command for segmented recording
       // Include camera ID (serial number) in filename to ensure uniqueness across cameras
-      const segmentPattern = path.join(cameraDir, '%Y', '%m', '%d', '%H', `${camera._id}_segment_%Y%m%d_%H%M%S.mp4`);
+      const segmentPattern = path.join(cameraDir, '%Y', '%m', '%d', `${camera._id}_segment_%Y%m%d_%H%M%S.mp4`);
 
       const ffmpegArgs = [
         // RTSP connection settings
@@ -387,38 +386,36 @@ class RecordingManager {
 
         this.recordings.delete(cameraId);
 
-        // Update camera status
-        try {
-          await Camera.findByIdAndUpdate(cameraId, {
-            'status.recordingState': 'stopped',
-          });
-        } catch (error) {
-          logger.error(`Error updating camera status for ${cameraId}:`, error);
-        }
-
         // Auto-restart on unexpected exit (but not on SIGTERM)
         if (code !== 0 && signal !== 'SIGTERM') {
           logger.info(`Attempting to restart recording for camera ${cameraId} in 10 seconds`);
-          notifier.warning(
-            'Inspelning avbruten',
-            `Kamera ${camera.name} tappade anslutningen (kod ${code}). Startar om om 10 s.`,
-            `rec-disconnect-${cameraId}`
-          ).catch(() => {});
           setTimeout(async () => {
             try {
               const cam = await Camera.findById(cameraId);
-              if (cam && cam.active && cam.status.recordingState !== 'stopped') {
+              if (cam && cam.active) {
                 await this.startRecording(cam);
+              } else {
+                await Camera.findByIdAndUpdate(cameraId, { 'status.recordingState': 'stopped' });
               }
             } catch (err) {
               logger.error(`Failed to restart recording for camera ${cameraId}:`, err);
+              const cameraName = recordingData.camera?.name || cameraId;
               notifier.error(
                 'Omstart misslyckades',
-                `Kamera ${camera.name} kunde inte startas om: ${err.message}`,
+                `Kamera ${cameraName} kunde inte startas om: ${err.message}`,
                 `rec-restart-fail-${cameraId}`
               ).catch(() => {});
+              await Camera.findByIdAndUpdate(cameraId, { 'status.recordingState': 'stopped' }).catch(() => {});
             }
           }, 10000);
+        } else {
+          try {
+            await Camera.findByIdAndUpdate(cameraId, {
+              'status.recordingState': 'stopped',
+            });
+          } catch (error) {
+            logger.error(`Error updating camera status for ${cameraId}:`, error);
+          }
         }
       });
 
@@ -699,9 +696,9 @@ class RecordingManager {
         const cameraId = camera._id;
         const isRecording = this.recordings.has(cameraId);
 
-        // Keep the next 2 hours of segment directories pre-created
+        // Keep the next 2 days of segment directories pre-created
         const cameraDir = path.join(this.storageBasePath, 'recordings', String(cameraId));
-        this.createUpcomingHourDirs(cameraDir, 2).catch(() => {});
+        this.createUpcomingDayDirs(cameraDir, 2).catch(() => {});
 
         // If camera should be recording but isn't, start it
         if (!isRecording) {
